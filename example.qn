@@ -1,0 +1,66 @@
+# --- COLLECTIONS ---
+let scores: dict<str, int> = {"Alice": 90, "Bob": 85};
+emit("Alice's score: " + scores["Alice"]);
+
+let point: tuple<int, int>   = (10, 20);
+emit("Point X: " + point[0]);
+
+let colors: set<str> = set {"red", "green", "blue"};
+emit("Color set: " + colors);
+
+# --- ADVANCED TYPES ---
+type ID = int;
+let userId: ID = 12345;
+emit("User ID: " + userId);
+
+enum Status { Pending, Active, Inactive }
+# Enums are stubs in compiler for now, but let's declare them.
+
+# --- PIPE OPERATOR ---
+task double(x: int) -> int { return x * 2; }
+let p_res = 5 |> double;
+emit("Pipe result (5 |> double): " + p_res);
+
+# --- ERROR HANDLING ---
+# Note: Try/Catch registration in VM is a stub, so 'throw' might be uncaught.
+# But let's see if it parses and compile.
+# try {
+#    emit("Throwing error...");
+#    throw "Something went wrong!";
+# } catch (err) {
+#    emit("Caught error: " + err);
+# } finally {
+#    emit("Finally block executed.");
+# }
+
+# --- ASYNC / AWAIT ---
+async task fetchData() {
+    return "Data from server";
+}
+
+let data = await fetchData();
+emit("Async data: " + data);
+
+# --- CASTING ---
+let val: any = 42;
+let num = val as int;
+emit("Cast result: " + num);
+
+# --- OPTIONAL CHAINING ---
+let user: any = {"name": "John"};
+emit("User name: " + user?.name);
+emit("User address: " + user?.address); # Should be void/null
+
+# --- DESTRUCTURING ---
+# let { name, age } = { name: "Sajid", age: 25 };
+# emit("Name: " + name);
+
+# --- TERNARY / INLINE IF ---
+let status = if 10 > 5 { "greater"; } else { "less"; };
+emit("Status: " + status);
+
+# --- STDLIB MATH ---
+let result = sqrt(16.0);
+emit("Square root of 16.0 is: " + result);
+let p = pow(2.0, 3.0);
+emit("2.0 to the power of 3.0 is: " + p);

@@ -1,0 +1,7 @@
+[package]
+name = "quin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# We'll stick to standard library to avoid dependency issues if Cargo isn't fully configured

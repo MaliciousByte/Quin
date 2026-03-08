@@ -1,0 +1,79 @@
+# --- COMPREHENSIVE TEST SUITE ---
+
+# 1. Basic Types & Arithmetic
+let a: int = 10;
+let b: float = 20.5;
+let c: str = "Quin";
+let d: bool = true;
+emit("Arithmetic: " + (a + 5) * 2); # 30
+emit("String concat: " + c + " Lang");
+
+# 2. Collections
+let my_dict = {"key": "value", "num": 42};
+emit("Dict access: " + my_dict["key"]);
+
+let my_tuple = (1, "two", 3.0);
+emit("Tuple access: " + my_tuple[1]);
+
+let my_set = set {1, 2, 2, 3};
+emit("Set display: " + my_set);
+
+# 3. Control Flow
+if a > 5 {
+    emit("If works");
+} else {
+    emit("If failed");
+}
+
+let ternary = if d { "Yes" } else { "No" };
+emit("Ternary: " + ternary);
+
+# 4. Functions & Advanced Syntax
+task timesTwo(x: int) -> int { return x * 2; }
+
+# Lambda / Anonymous Task
+let lambda = task(x) { return x * 3; };
+emit("Lambda (10 * 3): " + lambda(10));
+
+# Pipe
+let piped = 5 |> timesTwo |> lambda;
+emit("Piped (5 |> timesTwo |> lambda): " + piped); # (5*2)*3 = 30
+
+# 5. OOP Features
+interface Speakable {
+    task speak();
+}
+
+abstract class Animal {
+    pub static task create() { emit("Animal factory"); }
+    abstract task move();
+}
+
+class Dog extends Animal implements Speakable {
+    pub name: str; # Properties are stubs in compiler for now
+
+    constructor(name: str) {
+        self.name = name;
+        emit("Dog created: " + name);
+    }
+
+    pub task speak() {
+        emit(self.name + " says Woof!");
+    }
+
+    pub task move() {
+        emit(self.name + " is running...");
+    }
+}
+
+let my_dog = Dog("Rex");
+my_dog.speak();
+my_dog.move();
+Dog.create(); # Static method call
+
+# 6. Optional Chaining
+let obj: any = {"data": {"val": 100}};
+emit("Optional chain: " + obj?.data?.val);
+emit("Optional chain null: " + obj?.missing?.property);
+
+emit("Verification Complete!");
