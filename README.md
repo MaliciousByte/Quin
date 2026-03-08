@@ -1,45 +1,114 @@
-![Alt text](https://cdn.discordapp.com/attachments/1478339860484853885/1480207462735937739/ChatGPT_Image_Mar_8_2026_05_44_49_PM.png?ex=69aed620&is=69ad84a0&hm=a6318dc72d10199889bb18d7144b233a67f8b6981ae47ff527dea83dfc4e4ba8)
+# 🌌 Quin Programming Language
 
+**Quin** is a modern, high-performance, statically-typed programming language designed for reliability, speed, and developer happiness. Built on top of a custom bytecode Virtual Machine (VM) implemented in Rust, Quin combines the aesthetics of modern scripting languages with the performance of systems-level execution.
 
-# Quin Programming Language
+---
 
-Quin is a modern, high-performance programming language implemented in Rust, featuring a custom bytecode Virtual Machine (VM).
+## 🚀 Key Features
 
-## Features
+### 💎 Object-Oriented Excellence
+- **Full Class System**: Inheritance, encapsulation, and polymorphism.
+- **Interfaces & Abstraction**: Design robust architectures with `interface` and `abstract class`.
+- **Static Members**: Powerful class-level tasks and properties.
+- **Self-Binding**: Intuitive `self` reference management in constructors and methods.
 
-- **Variables & Consts**: Robust scoping with `let` and `let const`.
-- **Functions**: Task definitions (`task`) with support for parameters and return values.
-- **Control Flow**: `if/elif/else` logic and `while` loops.
-- **Arrays**: Built-in support for array literals and indexing.
-- **Classes & Structs**: Object-oriented features with property access.
-- **Bytecode VM**: Executes code on a fast, stack-based virtual machine.
-- **Standard Library**: Built-in functions for output (`emit`) and math (`sqrt`, `pow`).
+### 🧩 Functional Prowess
+- **First-Class Tasks**: Pass functions as arguments or return them from other functions.
+- **Lambdas & Closures**: Anonymous tasks with lexical scoping.
+- **Pipe Operator (`|>`)**: Clean, readable data flow chaining.
 
-## Getting Started
+### 🛡️ Safety & Modern Syntax
+- **Nullable Safety**: Optional chaining (`?.`) to prevent null-reference errors.
+- **Static Typing**: Explicit type annotations with a powerful inference engine.
+- **Modern Control Flow**: Ternary expressions, `if/else` blocks, and sophisticated loops.
+
+### ⚡ Performance & Runtime
+- **Bytecode VM**: A fast, stack-based environment optimized for modern CPUs.
+- **Native Interop**: High-speed native function bindings for high-performance extensions.
+
+---
+
+## 🛠️ Quick Start
 
 ### Installation
 
-1. Clone the repository.
-2. Build the project using Rust:
-   ```bash
-   cargo build --release
-   ```
-3. (Optional) Move the binary to your PATH to use the `quin` command globally.
+Ensure you have Rust installed. Clone the repository and build:
 
-### Usage
-
-Create a file with the `.qn` extension (e.g., `hello.qn`):
-
-```quin
-let name = "World"
-emit("Hello, " + name)
+```bash
+git clone https://github.com/quin-lang/quin.git
+cd quin
+cargo build --release
 ```
 
-Run it using the interpreter:
+Add the `target/release/quin` binary to your system **PATH** for global access.
+
+### Your First Program
+
+Save the following as `hello.qn`:
+
+```quin
+# Define a class
+class Greeter {
+    constructor(name: str) {
+        self.name = name;
+    }
+
+    task greet() {
+        emit("Hello, " + self.name + "! Welcome to Quin.");
+    }
+}
+
+# Use the class with optional chaining
+let myGreeter = Greeter("Developer");
+myGreeter?.greet();
+```
+
+Run it instantly:
 ```bash
 quin hello.qn
 ```
 
-## License
+---
 
-MIT License
+## 📖 Language Overview
+
+### Variables & Scoping
+Quin uses `let` for immutable and mutable variables, supporting block-level scoping.
+```quin
+let x = 10;
+let mut y = 20; # If mutability is enabled
+```
+
+### Collections
+Native support for powerful data structures:
+- **Dicts**: `let map = {"key": "value"}`
+- **Sets**: `let s = set {1, 2, 3}`
+- **Tuples**: `let t = (1, "two", 3.0)`
+
+### The Pipe Operator
+Elegant data transformations:
+```quin
+let results = [1, 2, 3] 
+    |> map(task(x) { x * 2 })
+    |> filter(task(x) { x > 2 });
+```
+
+---
+
+## 🛣️ Roadmap
+
+- [x] Custom Bytecode VM
+- [x] OOP Support (Classes, Methods, Inheritance)
+- [x] Functional Features (Lambdas, Pipes)
+- [ ] Tracing Garbage Collector (Replacing Rc cycles)
+- [ ] Full Static Type Checker
+- [ ] Standard Library Expansion (FS, HTTP, OS)
+
+---
+
+## 🛰️ Community & Contributing
+
+Quin is open-source. We welcome contributions to the compiler, VM, and standard library.
+
+**License**: MIT
+**Author**: Quin Team
