@@ -28,12 +28,12 @@ pub enum TokenType {
     FloatLit,
 
     // Keywords.
-    Let, Const, Task, Return, If, Elif, Else, For, In, While,
-    Struct, Class, Extends, Match, Try, Catch, Import, From,
+    Let, Mut, Const, Task, Return, If, Elif, Else, For, In, While,
+    Struct, Class, Extends, Match, Attempt, Rescue, Use, From,
     Self_, Void, True, False,
     Enum, Type, Any, Dict, Set, Tuple,
-    Throw, Finally, Export, Async, Await, As,
-    Pub, Priv, Interface, Abstract, Static, Implements,
+    Raise, Finally, Export, Async, Await, As,
+    Pub, Priv, Trait, Base, Shared, With,
 
     // Types (often parsed from identifiers, but good to have if we syntax highlight them as keywords)
     TypeInt, TypeFloat, TypeStr, TypeBool,

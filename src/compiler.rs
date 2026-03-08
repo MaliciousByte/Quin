@@ -8,33 +8,45 @@ use std::rc::Rc;
 struct Local {
     name: String,
     depth: usize,
+    is_captured: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct UpvalueMetadata {
+    pub index: usize,
+    pub is_local: bool,
 }
 
 pub struct Compiler {
-    function: Function,
-    locals: Vec<Local>,
-    scope_depth: usize,
-    globals: HashMap<String, usize>,
+    pub function: Function,
+    pub parent: Option<*mut Compiler>,
+    pub locals: Vec<Local>,
+    pub upvalues: Vec<UpvalueMetadata>,
+    pub scope_depth: usize,
+    pub globals: HashMap<String, usize>,
     pub emitting_method: bool,
 }
 
 impl Compiler {
-    pub fn new(name: &str, is_async: bool, is_method: bool) -> Self {
+    pub fn new(name: &str, is_async: bool, is_method: bool, parent: Option<*mut Compiler>) -> Self {
         let mut compiler = Compiler {
             function: Function {
                 name: name.to_string(),
                 arity: 0,
                 is_async,
                 chunk: Chunk::new(),
+                upvalues: Vec::new(),
             },
+            parent,
             locals: Vec::new(),
+            upvalues: Vec::new(),
             scope_depth: 0,
             globals: HashMap::new(),
             emitting_method: false,
         };
         // slot 0 for local call frame
         let slot0_name = if is_method { "self".to_string() } else { "".to_string() };
-        compiler.locals.push(Local { name: slot0_name, depth: 0 });
+        compiler.locals.push(Local { name: slot0_name, depth: 0, is_captured: false });
         compiler
     }
 
@@ -42,8 +54,7 @@ impl Compiler {
         for stmt in stmts {
             self.compile_stmt(stmt)?;
         }
-        self.emit(OpCode::Null, 0); // Implicit return void
-        self.emit(OpCode::Return, 0);
+        self.emit(OpCode::Return, 0); // slot 0 return is default
         Ok(self.function)
     }
 
@@ -58,7 +69,7 @@ impl Compiler {
                 if let Some(init) = initializer {
                     self.compile_expr(init)?;
                 } else {
-                    self.emit(OpCode::Null, 0); // Simplified line
+                    self.emit(OpCode::Null, 0);
                 }
 
                 match pattern {
@@ -67,6 +78,7 @@ impl Compiler {
                             self.locals.push(Local {
                                 name: name.lexeme.clone(),
                                 depth: self.scope_depth,
+                                is_captured: false,
                             });
                         } else {
                             let idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
@@ -118,7 +130,7 @@ impl Compiler {
             }
             Stmt::Function { name, params, variadic, is_async, is_static, is_abstract, visibility, body, .. } => {
                 let is_method = self.emitting_method; // Use emitting_method flag from outer compiler
-                let mut compiler = Compiler::new(&name.lexeme, *is_async, is_method);
+                let mut compiler = Compiler::new(&name.lexeme, *is_async, is_method, Some(self as *mut Compiler));
                 compiler.function.arity = params.len();
                 // TODO: handle variadic, default values, visibility, abstract, and static in VM/Compiler logic
                 let _ = is_static;
@@ -126,12 +138,12 @@ impl Compiler {
                 let _ = is_abstract;
                 compiler.begin_scope();
                 for (p, _, _) in params {
-                    compiler.locals.push(Local { name: p.lexeme.clone(), depth: compiler.scope_depth });
+                    compiler.locals.push(Local { name: p.lexeme.clone(), depth: compiler.scope_depth, is_captured: false });
                 }
                 for s in body {
                     compiler.compile_stmt(s)?;
                 }
-                if name.lexeme == "constructor" {
+                if name.lexeme == "init" || name.lexeme == "constructor" {
                     compiler.emit(OpCode::GetLocal(0), 0);
                 } else {
                     compiler.emit(OpCode::Null, 0);
@@ -142,13 +154,13 @@ impl Compiler {
                 let idx = self.add_constant(Value::Function(Rc::new(fun)));
                 
                 if self.emitting_method {
-                    self.emit(OpCode::Constant(idx), name.line);
+                    self.emit(OpCode::Closure(idx), name.line);
                 } else if self.scope_depth > 0 {
-                    self.emit(OpCode::Constant(idx), name.line);
-                    self.locals.push(Local { name: name.lexeme.clone(), depth: self.scope_depth });
+                    self.emit(OpCode::Closure(idx), name.line);
+                    self.locals.push(Local { name: name.lexeme.clone(), depth: self.scope_depth, is_captured: false });
                 } else {
                     let name_idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
-                    self.emit(OpCode::Constant(idx), name.line);
+                    self.emit(OpCode::Closure(idx), name.line);
                     self.emit(OpCode::DefineGlobal(name_idx), name.line);
                 }
             }
@@ -161,13 +173,22 @@ impl Compiler {
                 self.emit(OpCode::Return, keyword.line);
             }
             Stmt::TryCatch { try_body, catch_param, catch_body, finally_body } => {
-                // Real try/catch requires VM support for exception stack.
-                // For now, we'll just execute the try block.
+                let rescue_jump = self.emit_jump(OpCode::SetupHandler(0));
+                
                 self.compile_stmt(try_body)?;
-                // if it fails, catch body is not called here because VM doesn't throw.
-                // stub for catch_param.
-                let _ = catch_param;
-                let _ = catch_body;
+                self.emit(OpCode::PopHandler, 0); 
+                
+                let finally_jump = self.emit_jump(OpCode::Jump(0));
+                
+                self.patch_jump(rescue_jump);
+                
+                self.begin_scope();
+                self.locals.push(Local { name: catch_param.lexeme.clone(), depth: self.scope_depth, is_captured: false });
+                self.compile_stmt(catch_body)?;
+                self.end_scope();
+                
+                self.patch_jump(finally_jump);
+                
                 if let Some(fb) = finally_body {
                     self.compile_stmt(fb)?;
                 }
@@ -278,6 +299,21 @@ impl Compiler {
             Expr::Assign { name, value } => {
                 self.compile_expr(value)?;
                 self.named_variable(name, true)?;
+            }
+            Expr::Logical { left, operator, right } => {
+                if operator.ty == TokenType::Nullish {
+                    self.compile_expr(left)?;
+                    let jump_if_null = self.emit_jump(OpCode::JumpIfNull(0));
+                    let jump_end = self.emit_jump(OpCode::Jump(0));
+                    
+                    self.patch_jump(jump_if_null);
+                    self.emit(OpCode::Pop, operator.line); // pop the null
+                    self.compile_expr(right)?;
+                    
+                    self.patch_jump(jump_end);
+                } else {
+                    return Err(format!("Unknown logical operator {:?}", operator.ty));
+                }
             }
             Expr::Binary { left, operator, right } => {
                 self.compile_expr(left)?;
@@ -401,11 +437,11 @@ impl Compiler {
                 self.emit(OpCode::Cast(idx), 0);
             }
             Expr::Lambda { params, body, is_async } => {
-                let mut compiler = Compiler::new("lambda", *is_async, false);
+                let mut compiler = Compiler::new("lambda", *is_async, false, Some(self as *mut Compiler));
                 compiler.function.arity = params.len();
                 compiler.begin_scope();
                 for (p, _, _) in params {
-                    compiler.locals.push(Local { name: p.lexeme.clone(), depth: compiler.scope_depth });
+                    compiler.locals.push(Local { name: p.lexeme.clone(), depth: compiler.scope_depth, is_captured: false });
                 }
                 for s in body {
                     compiler.compile_stmt(s)?;
@@ -415,7 +451,7 @@ impl Compiler {
 
                 let fun = compiler.function;
                 let idx = self.add_constant(Value::Function(Rc::new(fun)));
-                self.emit(OpCode::Constant(idx), 0);
+                self.emit(OpCode::Closure(idx), 0);
             }
             _ => return Err(format!("Expression type compiling not yet implemented.")),
         }
@@ -428,6 +464,12 @@ impl Compiler {
                 self.emit(OpCode::SetLocal(arg), name.line);
             } else {
                 self.emit(OpCode::GetLocal(arg), name.line);
+            }
+        } else if let Some(arg) = self.resolve_upvalue(name) {
+            if can_assign {
+                self.emit(OpCode::SetUpvalue(arg), name.line);
+            } else {
+                self.emit(OpCode::GetUpvalue(arg), name.line);
             }
         } else {
             let arg = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
@@ -447,6 +489,34 @@ impl Compiler {
             }
         }
         None
+    }
+
+    fn resolve_upvalue(&mut self, name: &Token) -> Option<usize> {
+        let parent_ptr = self.parent?;
+        let parent = unsafe { &mut *parent_ptr };
+
+        if let Some(local_idx) = parent.resolve_local(name) {
+            parent.locals[local_idx].is_captured = true;
+            return Some(self.add_upvalue(local_idx, true));
+        }
+
+        if let Some(upvalue_idx) = parent.resolve_upvalue(name) {
+            return Some(self.add_upvalue(upvalue_idx, false));
+        }
+
+        None
+    }
+
+    fn add_upvalue(&mut self, index: usize, is_local: bool) -> usize {
+        for (i, upvalue) in self.upvalues.iter().enumerate() {
+            if upvalue.index == index && upvalue.is_local == is_local {
+                return i;
+            }
+        }
+
+        self.upvalues.push(UpvalueMetadata { index, is_local });
+        self.function.upvalues.push(crate::value::UpvalueRequirement { is_local, index });
+        self.upvalues.len() - 1
     }
 
     fn begin_scope(&mut self) {
@@ -480,6 +550,7 @@ impl Compiler {
             OpCode::JumpIfFalse(ref mut val) => *val = jump,
             OpCode::Jump(ref mut val) => *val = jump,
             OpCode::JumpIfNull(ref mut val) => *val = jump,
+            OpCode::SetupHandler(ref mut val) => *val = jump,
             _ => {}
         }
     }

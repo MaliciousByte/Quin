@@ -53,6 +53,16 @@ pub enum OpCode {
     BuildClass(usize),
     Method(usize),
     JumpIfNull(usize),
+    
+    // Closures
+    Closure(usize), // constant index of function
+    GetUpvalue(usize),
+    SetUpvalue(usize),
+    CloseUpvalue,
+
+    // Error Handling
+    SetupHandler(usize), // jump offset to rescue block
+    PopHandler,
 }
 
 #[derive(Clone, Default)]

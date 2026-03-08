@@ -31,26 +31,32 @@ impl Parser {
             let stmt = self.declaration()?;
             return Ok(Stmt::Export(Box::new(stmt)));
         }
-        if self.match_token(&[TokenType::Let]) {
-            self.let_declaration()
-        } else if self.match_token(&[TokenType::Task]) || self.check(TokenType::Async) || self.check(TokenType::Static) {
-            let is_static = self.match_token(&[TokenType::Static]);
+        if self.match_token(&[TokenType::Let, TokenType::Const]) {
+            if self.previous().ty == TokenType::Const {
+                self.current -= 1; // step back to read it smoothly in `let_declaration`
+                self.let_declaration()
+            } else {
+                self.let_declaration()
+            }
+
+        } else if self.match_token(&[TokenType::Task]) || self.check(TokenType::Async) || self.check(TokenType::Shared) {
+            let is_static = self.match_token(&[TokenType::Shared]);
             let is_async = self.match_token(&[TokenType::Async]);
             if is_async { self.consume(TokenType::Task, "Expect 'task' after 'async'.")?; }
             else { self.match_token(&[TokenType::Task]); }
             self.task_declaration(visibility, is_static, is_async, false)
-        } else if self.match_token(&[TokenType::Class]) || self.check(TokenType::Abstract) {
-            let is_abstract = self.match_token(&[TokenType::Abstract]);
-            if is_abstract { self.consume(TokenType::Class, "Expect 'class' after 'abstract'.")?; }
+        } else if self.match_token(&[TokenType::Class]) || self.check(TokenType::Base) {
+            let is_abstract = self.match_token(&[TokenType::Base]);
+            if is_abstract { self.consume(TokenType::Class, "Expect 'class' after 'base'.")?; }
             else { self.match_token(&[TokenType::Class]); }
             self.class_declaration(is_abstract)
-        } else if self.match_token(&[TokenType::Interface]) {
+        } else if self.match_token(&[TokenType::Trait]) {
             self.interface_declaration()
-        } else if self.match_token(&[TokenType::Throw]) {
+        } else if self.match_token(&[TokenType::Raise]) {
             self.throw_statement()
         } else if self.match_token(&[TokenType::Struct]) {
             self.struct_declaration()
-        } else if self.match_token(&[TokenType::Import]) {
+        } else if self.match_token(&[TokenType::Use]) {
             self.import_declaration()
         } else if self.match_token(&[TokenType::Enum]) {
             self.enum_declaration()
@@ -62,6 +68,7 @@ impl Parser {
     }
 
     fn let_declaration(&mut self) -> Result<Stmt, String> {
+        self.match_token(&[TokenType::Mut]); // optional mut keyword
         let is_const = self.match_token(&[TokenType::Const]);
         
         let pattern = if self.match_token(&[TokenType::LeftBrace]) {
@@ -141,8 +148,12 @@ impl Parser {
 
         let body = if is_abstract || self.match_token(&[TokenType::Semicolon]) {
             if !is_abstract { self.match_token(&[TokenType::Semicolon]); } // Consume if it was just a semicolon header
-            else { self.consume(TokenType::Semicolon, "Expect ';' after abstract task.")?; }
+            else { self.consume(TokenType::Semicolon, "Expect ';' after base task.")?; }
             Vec::new()
+        } else if self.match_token(&[TokenType::FatArrow]) {
+            let expr = self.expression()?;
+            self.consume(TokenType::Semicolon, "Expect ';' after arrow function body.")?;
+            vec![Stmt::Return { keyword: name.clone(), value: Some(expr) }]
         } else {
             self.consume(TokenType::LeftBrace, "Expect '{' before function body.")?;
             self.block()?
@@ -201,9 +212,9 @@ impl Parser {
         };
 
         let mut interfaces = Vec::new();
-        if self.match_token(&[TokenType::Implements]) {
+        if self.match_token(&[TokenType::With]) {
             loop {
-                interfaces.push(self.consume(TokenType::Identifier, "Expect interface name.")?.clone());
+                interfaces.push(self.consume(TokenType::Identifier, "Expect trait name.")?.clone());
                 if !self.match_token(&[TokenType::Comma]) { break; }
             }
         }
@@ -216,26 +227,27 @@ impl Parser {
             if self.match_token(&[TokenType::Pub]) { vis = Visibility::Public; }
             else if self.match_token(&[TokenType::Priv]) { vis = Visibility::Private; }
 
-            let is_static = self.match_token(&[TokenType::Static]);
+            let is_static = self.match_token(&[TokenType::Shared]);
             let is_async = self.match_token(&[TokenType::Async]);
-            let is_abs = self.match_token(&[TokenType::Abstract]);
+            let is_abs = self.match_token(&[TokenType::Base]);
 
             if self.match_token(&[TokenType::Task]) || is_async {
                 methods.push(self.task_declaration(vis, is_static, is_async, is_abs)?);
-            } else if self.check(TokenType::Identifier) && self.peek().lexeme == "constructor" {
+            } else if self.check(TokenType::Identifier) && self.peek().lexeme == "init" {
                 self.advance();
-                self.consume(TokenType::LeftParen, "Expect '(' after constructor.")?;
+                self.consume(TokenType::LeftParen, "Expect '(' after init.")?;
                 let params = self.parse_params()?;
                 self.consume(TokenType::RightParen, "Expect ')' after parameters.")?;
-                self.consume(TokenType::LeftBrace, "Expect '{' before constructor body.")?;
+                self.consume(TokenType::LeftBrace, "Expect '{' before init body.")?;
                 let body = self.block()?;
                 methods.push(Stmt::Function {
-                    name: Token { ty: TokenType::Identifier, lexeme: "constructor".to_string(), line: 0, column: 0 },
+                    name: Token { ty: TokenType::Identifier, lexeme: "init".to_string(), line: 0, column: 0 },
                     params, variadic: false, is_async: false, is_static: false, is_abstract: false,
                     visibility: Visibility::Public, return_type: None, body
                 });
-            } else if self.check(TokenType::Identifier) {
+            } else if self.match_token(&[TokenType::Let]) || self.check(TokenType::Identifier) {
                 // Property
+                self.match_token(&[TokenType::Mut]); // consume mut if present
                 let _name = self.consume(TokenType::Identifier, "Expect property name.")?;
                 self.consume(TokenType::Colon, "Expect ':' after property name.")?;
                 self.parse_type()?;
@@ -272,15 +284,15 @@ impl Parser {
     }
 
     fn interface_declaration(&mut self) -> Result<Stmt, String> {
-        let name = self.consume(TokenType::Identifier, "Expect interface name.")?.clone();
-        self.consume(TokenType::LeftBrace, "Expect '{' before interface body.")?;
+        let name = self.consume(TokenType::Identifier, "Expect trait name.")?.clone();
+        self.consume(TokenType::LeftBrace, "Expect '{' before trait body.")?;
         let mut methods = Vec::new();
         while !self.check(TokenType::RightBrace) && !self.is_at_end() {
             let is_async = self.match_token(&[TokenType::Async]);
-            self.consume(TokenType::Task, "Expect 'task' in interface method signature.")?;
+            self.consume(TokenType::Task, "Expect 'task' in trait method signature.")?;
             methods.push(self.task_declaration(Visibility::Public, false, is_async, true)?);
         }
-        self.consume(TokenType::RightBrace, "Expect '}' after interface body.")?;
+        self.consume(TokenType::RightBrace, "Expect '}' after trait body.")?;
         Ok(Stmt::Interface { name, methods })
     }
 
@@ -288,7 +300,7 @@ impl Parser {
         if self.match_token(&[TokenType::If]) { return self.if_statement(); }
         if self.match_token(&[TokenType::For]) { return self.for_statement(); }
         if self.match_token(&[TokenType::While]) { return self.while_statement(); }
-        if self.match_token(&[TokenType::Try]) { return self.try_statement(); }
+        if self.match_token(&[TokenType::Attempt]) { return self.try_statement(); }
         if self.match_token(&[TokenType::Match]) { return self.match_statement(); }
         if self.match_token(&[TokenType::Return]) { return self.return_statement(); }
         if self.match_token(&[TokenType::LeftBrace]) { return Ok(Stmt::Block(self.block()?)); }
@@ -375,13 +387,13 @@ impl Parser {
     }
 
     fn try_statement(&mut self) -> Result<Stmt, String> {
-        self.consume(TokenType::LeftBrace, "Expect '{' after try.")?;
+        self.consume(TokenType::LeftBrace, "Expect '{' after attempt.")?;
         let try_body = Box::new(Stmt::Block(self.block()?));
-        self.consume(TokenType::Catch, "Expect 'catch' after try block.")?;
-        self.consume(TokenType::LeftParen, "Expect '(' after catch.")?;
+        self.consume(TokenType::Rescue, "Expect 'rescue' after attempt block.")?;
+        self.consume(TokenType::LeftParen, "Expect '(' after rescue.")?;
         let catch_param = self.consume(TokenType::Identifier, "Expect error variable name.")?.clone();
         self.consume(TokenType::RightParen, "Expect ')' after error variable.")?;
-        self.consume(TokenType::LeftBrace, "Expect '{' after catch parens.")?;
+        self.consume(TokenType::LeftBrace, "Expect '{' after rescue parens.")?;
         let catch_body = Box::new(Stmt::Block(self.block()?));
         
         let mut finally_body = None;
@@ -395,7 +407,7 @@ impl Parser {
 
     fn throw_statement(&mut self) -> Result<Stmt, String> {
         let value = self.expression()?;
-        self.consume(TokenType::Semicolon, "Expect ';' after throw.")?;
+        self.consume(TokenType::Semicolon, "Expect ';' after raise.")?;
         Ok(Stmt::Throw(value))
     }
 
@@ -607,10 +619,68 @@ impl Parser {
             return Ok(Expr::Literal(Literal::Float(f)));
         }
         if self.match_token(&[TokenType::StringLit]) {
-            // strip quotes
-            let mut s = self.previous().lexeme.clone();
-            s.remove(0); s.pop();
-            return Ok(Expr::Literal(Literal::String(s)));
+            let token = self.previous().clone();
+            let mut s = token.lexeme.clone();
+            s.remove(0); s.pop(); // strip quotes
+            
+            if !s.contains('{') {
+                return Ok(Expr::Literal(Literal::String(s)));
+            }
+            
+            let mut parts = Vec::new();
+            let mut current_str = String::new();
+            let mut chars = s.chars().peekable();
+            
+            while let Some(c) = chars.next() {
+                if c == '{' {
+                    if !current_str.is_empty() {
+                        parts.push(Expr::Literal(Literal::String(current_str.clone())));
+                        current_str.clear();
+                    }
+                    let mut expr_str = String::new();
+                    while let Some(&inner_c) = chars.peek() {
+                        if inner_c == '}' {
+                            chars.next(); // consume '}'
+                            break;
+                        }
+                        expr_str.push(inner_c);
+                        chars.next();
+                    }
+                    if expr_str.is_empty() { continue; }
+                    
+                    // Parse inner expression
+                    let mut lexer = crate::lexer::Lexer::new(&expr_str);
+                    let mut tokens = lexer.scan_tokens()?;
+                    if tokens.last().map_or(false, |t| t.ty == TokenType::Eof) {
+                        tokens.pop();
+                    }
+                    let mut parser = Parser::new(tokens);
+                    let expr = parser.expression()?;
+                    parts.push(expr);
+                } else {
+                    current_str.push(c);
+                }
+            }
+            if !current_str.is_empty() {
+                parts.push(Expr::Literal(Literal::String(current_str)));
+            }
+
+            if parts.is_empty() {
+                return Ok(Expr::Literal(Literal::String("".to_string())));
+            }
+
+            let mut final_expr = parts[0].clone();
+            let plus_token = Token::new(TokenType::Plus, "+".to_string(), token.line, token.column);
+            
+            for i in 1..parts.len() {
+                final_expr = Expr::Binary {
+                    left: Box::new(final_expr),
+                    operator: plus_token.clone(),
+                    right: Box::new(parts[i].clone())
+                };
+            }
+
+            return Ok(final_expr);
         }
 
         if self.match_token(&[TokenType::Identifier]) {
@@ -727,19 +797,35 @@ impl Parser {
         }
 
         if self.match_token(&[TokenType::Task]) {
-            // Lambda: task(params) { body }
+            // Lambda: task(params) { body } or task(params) => expr
             self.consume(TokenType::LeftParen, "Expect '(' after 'task' in lambda.")?;
             let mut params = Vec::new();
             if !self.check(TokenType::RightParen) {
                 loop {
                     let name = self.consume(TokenType::Identifier, "Expect parameter name.")?.clone();
-                    params.push((name, None, None));
+                    let param_type = if self.match_token(&[TokenType::Colon]) { Some(self.parse_type()?) } else { None };
+                    params.push((name, param_type, None));
                     if !self.match_token(&[TokenType::Comma]) { break; }
                 }
             }
             self.consume(TokenType::RightParen, "Expect ')' after parameters.")?;
-            self.consume(TokenType::LeftBrace, "Expect '{' before lambda body.")?;
-            let body = self.block()?;
+            
+            // Optional return type
+            let _return_type = if self.match_token(&[TokenType::Arrow]) {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            
+            let body = if self.match_token(&[TokenType::FatArrow]) {
+                let expr = self.expression()?;
+                let return_kw = Token::new(TokenType::Return, "return".to_string(), self.previous().line, self.previous().column);
+                vec![Stmt::Return { keyword: return_kw, value: Some(expr) }]
+            } else {
+                self.consume(TokenType::LeftBrace, "Expect '{' before lambda body.")?;
+                self.block()?
+            };
+
             return Ok(Expr::Lambda { 
                 params,
                 body,
@@ -793,6 +879,9 @@ impl Parser {
     }
 
     fn peek(&self) -> &Token {
+        if self.current >= self.tokens.len() {
+            return self.tokens.last().unwrap();
+        }
         &self.tokens[self.current]
     }
 

@@ -6,12 +6,10 @@ use crate::value::{Value, Function, Instance, ClassValue, InstanceValue, BoundMe
 
 const STACK_MAX: usize = 256;
 
-pub struct Closure {
-    pub function: Rc<Function>,
-}
+// Use Closure from value.rs
 
 struct CallFrame {
-    function: Rc<Function>,
+    closure: Rc<crate::value::Closure>,
     ip: usize,
     stack_offset: usize,
 }
@@ -27,6 +25,7 @@ pub struct VM {
     stack: Vec<Value>,
     globals: HashMap<String, Value>,
     handlers: Vec<ExceptionHandler>,
+    open_upvalues: Vec<Rc<RefCell<crate::value::Upvalue>>>,
 }
 
 impl VM {
@@ -36,6 +35,7 @@ impl VM {
             stack: Vec::with_capacity(STACK_MAX),
             globals: HashMap::new(),
             handlers: Vec::new(),
+            open_upvalues: Vec::new(),
         };
 
         // Built-in emit function
@@ -81,12 +81,12 @@ impl VM {
     }
 
     pub fn interpret(&mut self, function: Function) -> Result<(), String> {
-        let frame = CallFrame {
+        let closure = Rc::new(crate::value::Closure {
             function: Rc::new(function),
-            ip: 0,
-            stack_offset: 0,
-        };
-        self.frames.push(frame);
+            upvalues: Vec::new(),
+        });
+        self.stack.push(Value::Closure(closure.clone()));
+        self.call_closure(closure, 0)?;
 
         self.run()
     }
@@ -107,6 +107,53 @@ impl VM {
                 OpCode::Dup => {
                     let val = self.peek(0)?.clone();
                     self.push(val);
+                }
+                
+                OpCode::Closure(idx) => {
+                    let function_val = self.read_constant(idx)?;
+                    if let Value::Function(function) = function_val {
+                        let mut upvalues = Vec::new();
+                        for req in &function.upvalues {
+                            if req.is_local {
+                                upvalues.push(self.capture_upvalue(self.current_frame()?.stack_offset + req.index));
+                            } else {
+                                upvalues.push(self.current_frame()?.closure.upvalues[req.index].clone());
+                            }
+                        }
+                        let closure = Rc::new(crate::value::Closure {
+                            function,
+                            upvalues,
+                        });
+                        self.push(Value::Closure(closure));
+                    } else {
+                        return Err("Expected function for closure.".to_string());
+                    }
+                }
+
+                OpCode::GetUpvalue(slot) => {
+                    let upvalue = self.current_frame()?.closure.upvalues[slot].clone();
+                    let val = if let Some(closed) = &upvalue.borrow().closed {
+                        closed.clone()
+                    } else {
+                        self.stack[upvalue.borrow().index].clone()
+                    };
+                    self.push(val);
+                }
+
+                OpCode::SetUpvalue(slot) => {
+                    let upvalue = self.current_frame()?.closure.upvalues[slot].clone();
+                    let val = self.peek(0)?.clone();
+                    if upvalue.borrow().closed.is_some() {
+                        upvalue.borrow_mut().closed = Some(val);
+                    } else {
+                        let idx = upvalue.borrow().index;
+                        self.stack[idx] = val;
+                    }
+                }
+
+                OpCode::CloseUpvalue => {
+                    self.close_upvalues(self.stack.len() - 1);
+                    self.pop()?;
                 }
                 
                 OpCode::GetLocal(slot) => {
@@ -215,6 +262,7 @@ impl VM {
                 OpCode::Return => {
                     let result = self.pop()?;
                     let frame = self.frames.pop().unwrap();
+                    self.close_upvalues(frame.stack_offset);
                     self.stack.truncate(frame.stack_offset);
                     self.push(result);
                     if self.frames.is_empty() {
@@ -436,7 +484,7 @@ impl VM {
 
                 OpCode::Throw => {
                     let error = self.pop()?;
-                    return self.handle_exception(error);
+                    self.handle_exception(error)?;
                 }
 
                 OpCode::Await => {
@@ -449,6 +497,21 @@ impl VM {
                     let _target_type = self.read_string(name_idx)?;
                     // Dynamic cast: for now just no-op as everything is Value
                     // In a strictly typed VM, we'd check and convert.
+                }
+
+                OpCode::SetupHandler(offset) => {
+                    let frame_idx = self.frames.len() - 1;
+                    let stack_idx = self.stack.len();
+                    let catch_ip = self.current_frame()?.ip + offset;
+                    self.handlers.push(ExceptionHandler {
+                        frame_idx,
+                        stack_idx,
+                        catch_ip,
+                    });
+                }
+
+                OpCode::PopHandler => {
+                    self.handlers.pop();
                 }
 
                 OpCode::Finally => {
@@ -485,20 +548,24 @@ impl VM {
 
     fn read_instruction(&mut self) -> Result<OpCode, String> {
         let frame = self.current_frame_mut()?;
-        if frame.ip >= frame.function.chunk.code.len() {
+        if frame.ip >= frame.closure.function.chunk.code.len() {
             return Err("Execution reached end of chunk without returning.".to_string());
         }
-        let op = frame.function.chunk.code[frame.ip];
+        let op = frame.closure.function.chunk.code[frame.ip];
         frame.ip += 1;
         Ok(op)
     }
 
     fn read_constant(&self, idx: usize) -> Result<Value, String> {
         let frame = self.current_frame()?;
-        if idx >= frame.function.chunk.constants.len() {
+        if idx >= frame.closure.function.chunk.constants.len() {
             return Err("Instruction referenced missing constant.".to_string());
         }
-        Ok(frame.function.chunk.constants[idx].clone())
+        let frame = self.current_frame()?;
+        if idx >= frame.closure.function.chunk.constants.len() {
+             return Err(format!("Constant index {} out of bounds.", idx));
+        }
+        Ok(frame.closure.function.chunk.constants[idx].clone())
     }
 
     fn read_string(&self, idx: usize) -> Result<String, String> {
@@ -527,13 +594,26 @@ impl VM {
     fn call_value(&mut self, arg_count: u8) -> Result<(), String> {
         let callee = self.peek(arg_count as usize)?.clone();
         match callee {
-            Value::Function(fun) => self.call(fun, arg_count),
+            Value::Function(fun) => {
+                // Should use closures, but for backward compatibility/simplicity:
+                let closure = Rc::new(crate::value::Closure {
+                    function: fun,
+                    upvalues: Vec::new(),
+                });
+                self.call_closure(closure, arg_count)
+            }
             Value::BoundMethod(bm) => {
                 let idx = self.stack.len() - arg_count as usize - 1;
                 self.stack[idx] = bm.receiver.clone();
-                self.call(bm.method.clone(), arg_count)
+                // We need to wrap function in closure if it's not already?
+                // For Quin, let's assume methods are functions.
+                let closure = Rc::new(crate::value::Closure {
+                    function: bm.method.clone(),
+                    upvalues: Vec::new(),
+                });
+                self.call_closure(closure, arg_count)
             }
-            Value::Closure(closure) => self.call(closure.function.clone(), arg_count),
+            Value::Closure(closure) => self.call_closure(closure, arg_count),
             Value::Class(cls) => {
                 let inst = Rc::new(RefCell::new(InstanceValue {
                     class: cls.clone(),
@@ -542,11 +622,17 @@ impl VM {
                 let idx = self.stack.len() - arg_count as usize - 1;
                 self.stack[idx] = Value::Object(inst.clone());
                 
-                if let Some(constructor_val) = cls.methods.borrow().get("constructor") {
-                    if let Value::Function(f) = constructor_val {
-                        return self.call(f.clone(), arg_count);
-                    } else if let Value::Closure(c) = constructor_val {
-                        return self.call(c.function.clone(), arg_count);
+                if let Some(constructor_val) = cls.methods.borrow().get("init").or(cls.methods.borrow().get("constructor")) {
+                    match constructor_val {
+                        Value::Closure(c) => return self.call_closure(c.clone(), arg_count),
+                        Value::Function(f) => {
+                            let closure = Rc::new(crate::value::Closure {
+                                function: f.clone(),
+                                upvalues: Vec::new(),
+                            });
+                            return self.call_closure(closure, arg_count);
+                        }
+                        _ => {}
                     }
                 } else if arg_count != 0 {
                     return Err(format!("Expected 0 arguments but got {}.", arg_count));
@@ -571,9 +657,9 @@ impl VM {
         }
     }
 
-    fn call(&mut self, function: Rc<Function>, arg_count: u8) -> Result<(), String> {
-        if arg_count as usize != function.arity {
-            return Err(format!("Expected {} arguments but got {}.", function.arity, arg_count));
+    fn call_closure(&mut self, closure: Rc<crate::value::Closure>, arg_count: u8) -> Result<(), String> {
+        if arg_count as usize != closure.function.arity {
+            return Err(format!("Expected {} arguments but got {}.", closure.function.arity, arg_count));
         }
 
         if self.frames.len() == 64 {
@@ -581,12 +667,41 @@ impl VM {
         }
 
         let frame = CallFrame {
-            function,
+            closure,
             ip: 0,
             stack_offset: self.stack.len() - arg_count as usize - 1,
         };
         self.frames.push(frame);
         Ok(())
+    }
+
+    fn capture_upvalue(&mut self, index: usize) -> Rc<RefCell<crate::value::Upvalue>> {
+        for upvalue in &self.open_upvalues {
+            if upvalue.borrow().index == index {
+                return upvalue.clone();
+            }
+        }
+
+        let upvalue = Rc::new(RefCell::new(crate::value::Upvalue {
+            index,
+            closed: None,
+        }));
+        self.open_upvalues.push(upvalue.clone());
+        upvalue
+    }
+
+    fn close_upvalues(&mut self, last_idx: usize) {
+        let mut i = 0;
+        while i < self.open_upvalues.len() {
+            let upvalue_rc = self.open_upvalues[i].clone();
+            if upvalue_rc.borrow().index >= last_idx {
+                let val = self.stack[upvalue_rc.borrow().index].clone();
+                upvalue_rc.borrow_mut().closed = Some(val);
+                self.open_upvalues.remove(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     fn is_falsey(&self, value: &Value) -> bool {

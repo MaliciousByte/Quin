@@ -31,6 +31,13 @@ pub struct Function {
     pub arity: usize,
     pub is_async: bool,
     pub chunk: Chunk,
+    pub upvalues: Vec<UpvalueRequirement>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct UpvalueRequirement {
+    pub is_local: bool,
+    pub index: usize,
 }
 
 pub struct Instance {
@@ -53,6 +60,12 @@ pub struct InstanceValue {
 
 pub struct Closure {
     pub function: Rc<Function>,
+    pub upvalues: Vec<Rc<RefCell<Upvalue>>>,
+}
+
+pub struct Upvalue {
+    pub index: usize,          // Stack index when open
+    pub closed: Option<Value>, // Value when closed
 }
 
 #[derive(Clone)]

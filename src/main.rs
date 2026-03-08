@@ -49,7 +49,7 @@ fn main() {
         }
     };
 
-    let compiler = Compiler::new("script", false, false);
+    let compiler = Compiler::new("script", false, false, None);
     let function = match compiler.compile(&ast) {
         Ok(f) => f,
         Err(e) => {
