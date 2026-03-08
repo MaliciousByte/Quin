@@ -1,3 +1,6 @@
+![Alt text](https://cdn.discordapp.com/attachments/1478339860484853885/1480207462735937739/ChatGPT_Image_Mar_8_2026_05_44_49_PM.png?ex=69aed620&is=69ad84a0&hm=a6318dc72d10199889bb18d7144b233a67f8b6981ae47ff527dea83dfc4e4ba8)
+
+
 # Quin Programming Language
 
 Quin is a modern, high-performance programming language implemented in Rust, featuring a custom bytecode Virtual Machine (VM).
