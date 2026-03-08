@@ -40,10 +40,6 @@ Run it using the interpreter:
 quin hello.qn
 ```
 
-## Logo & Branding
-
-Quin aims for a premium developer experience, with dedicated icons for `.qn` files and a sleek, modern brand aesthetic.
-
 ## License
 
 MIT License
