@@ -1,0 +1,30 @@
+# OOP Test
+emit("Testing OOP...");
+
+trait Greeter {
+    task greet() -> void;
+}
+
+class Person with Greeter {
+    priv name: str;
+    init(name: str) {
+        self.name = name;
+    }
+    
+    task greet() -> void {
+        emit("Hello, " + self.name);
+    }
+}
+
+let p: Person = Person("Alice");
+p.greet();
+
+class Counter {
+    shared count: int;
+    shared task increment() -> void {
+        emit("Incrementing shared member...");
+    }
+}
+
+Counter.increment();
+emit("OOP test complete.");

@@ -1,30 +1,29 @@
 # 🌌 Quin Programming Language
 
-**Quin** is a modern, high-performance, statically-typed programming language designed for reliability, speed, and developer happiness. Built on top of a custom bytecode Virtual Machine (VM) implemented in Rust, Quin combines the aesthetics of modern scripting languages with the performance of systems-level execution.
+**Quin** is a modern, high-performance programming language designed for reliability, speed, and developer happiness. Built on a custom bytecode VM in Rust, Quin combines the elegance of modern syntax with the performance of systems-level execution.
 
 ---
 
 ## 🚀 Key Features
 
 ### 💎 Object-Oriented Excellence
-- **Full Class System**: Inheritance, encapsulation, and polymorphism.
-- **Interfaces & Abstraction**: Design robust architectures with `interface` and `abstract class`.
-- **Static Members**: Powerful class-level tasks and properties.
-- **Self-Binding**: Intuitive `self` reference management in constructors and methods.
+- **Full Class System**: Inheritance, encapsulation, and polymorphism using `base` classes.
+- **Traits (Interfaces)**: Design robust architectures with the `trait` and `with` system.
+- **Shared Members**: Replace static bloat with the `shared` keyword for methods and properties.
+- **Refined Constructors**: Intuitive initialization using the `init` keyword.
 
 ### 🧩 Functional Prowess
-- **First-Class Tasks**: Pass functions as arguments or return them from other functions.
-- **Lambdas & Closures**: Anonymous tasks with lexical scoping.
+- **First-Class Tasks**: Pass functions as arguments or return them from other tasks.
+- **Closures & Upvalues**: Anonymous tasks with full lexical scoping and variable capture.
+- **Arrow Shorthand**: Clean syntax for simple tasks: `task add(a, b) => a + b;`.
 - **Pipe Operator (`|>`)**: Clean, readable data flow chaining.
 
 ### 🛡️ Safety & Modern Syntax
-- **Nullable Safety**: Optional chaining (`?.`) to prevent null-reference errors.
-- **Static Typing**: Explicit type annotations with a powerful inference engine.
-- **Modern Control Flow**: Ternary expressions, `if/else` blocks, and sophisticated loops.
-
-### ⚡ Performance & Runtime
-- **Bytecode VM**: A fast, stack-based environment optimized for modern CPUs.
-- **Native Interop**: High-speed native function bindings for high-performance extensions.
+- **Static Typing**: Early error detection with a robust type system.
+- **Null Safety**: Optional chaining (`?.`) and Nullish Coalescing (`??`) to handle voids gracefully.
+- **String Interpolation**: Embed expressions directly: `"Hello {name}!"`.
+- **Advanced Match**: Pattern matching with ranges and default cases.
+- **Error Handling**: Robust `attempt / rescue / finally` blocks for structured error recovery.
 
 ---
 
@@ -35,8 +34,6 @@
 Ensure you have Rust installed. Clone the repository and build:
 
 ```bash
-git clone https://github.com/quin-lang/quin.git
-cd quin
 cargo build --release
 ```
 
@@ -44,53 +41,85 @@ Add the `target/release/quin` binary to your system **PATH** for global access.
 
 ### Your First Program
 
-Save the following as `hello.qn`:
+Save the following as `main.qn`:
 
 ```quin
-# Define a class
-class Greeter {
-    constructor(name: str) {
-        self.name = name;
-    }
+trait Sound {
+    task make_noise();
+}
 
-    task greet() {
-        emit("Hello, " + self.name + "! Welcome to Quin.");
+class Animal {
+    let name: str;
+    init(name) {
+        self.name = name;
     }
 }
 
-# Use the class with optional chaining
-let myGreeter = Greeter("Developer");
-myGreeter?.greet();
+class Dog extends Animal with Sound {
+    task make_noise() {
+        emit("Dog {self.name} says: Woof!");
+    }
+}
+
+# Use closures and advanced syntax
+let multiplier: task(int) -> (task(int) -> int) = task(factor: int) => task(x: int) => x * factor;
+let double: task(int) -> int = multiplier(2);
+
+attempt {
+    let puppy: Dog = Dog("Buddy");
+    puppy.make_noise();
+    emit("Double 21 is: {double(21)}");
+} rescue (e) {
+    emit("Error encountered: {e}");
+} finally {
+    emit("Execution complete.");
+}
 ```
 
 Run it instantly:
 ```bash
-quin hello.qn
+quin main.qn
 ```
 
 ---
 
-## 📖 Language Overview
+## 📖 Documentation
 
-### Variables & Scoping
-Quin uses `let` for immutable and mutable variables, supporting block-level scoping.
-```quin
-let x = 10;
-let mut y = 20; # If mutability is enabled
+Explore the full capabilities of Quin:
+
+- [**Introduction**](doc/introduction.md): Overview and Philosophy.
+- [**Getting Started**](doc/getting_started.md): Installation and your first program.
+- [**Syntax Basics**](doc/syntax_basics.md): Variables, types, and control flow.
+- [**Collections**](doc/collections.md): Arrays, Dicts, Sets, and Tuples.
+- [**Functional Programming**](doc/functional_programming.md): Tasks, closures, and pipes.
+- [**Object-Oriented Programming**](doc/oop.md): Classes, traits, and shared members.
+- [**Error Handling**](doc/error_handling.md): `attempt`, `rescue`, and `raise`.
+
+---
+
+## 🛠️ Quick Start
+
+### Installation
+
+Ensure you have Rust installed. Clone the repository and build:
+
+```bash
+cargo build --release
 ```
 
-### Collections
-Native support for powerful data structures:
-- **Dicts**: `let map = {"key": "value"}`
-- **Sets**: `let s = set {1, 2, 3}`
-- **Tuples**: `let t = (1, "two", 3.0)`
+Add the `target/release/quin` binary to your system **PATH** for global access.
 
-### The Pipe Operator
-Elegant data transformations:
+### Your First Program
+
+Save the following as `main.qn`:
+
 ```quin
-let results = [1, 2, 3] 
-    |> map(task(x) { x * 2 })
-    |> filter(task(x) { x > 2 });
+emit("Hello, Quin!");
+```
+
+Run it instantly:
+```bash
+quin main.qn
 ```
 
 ---
@@ -98,17 +127,14 @@ let results = [1, 2, 3]
 ## 🛣️ Roadmap
 
 - [x] Custom Bytecode VM
-- [x] OOP Support (Classes, Methods, Inheritance)
-- [x] Functional Features (Lambdas, Pipes)
-- [ ] Tracing Garbage Collector (Replacing Rc cycles)
-- [ ] Full Static Type Checker
+- [x] Full Closure & Upvalue Support
+- [x] Structured Error Handling (`attempt/rescue`)
+- [x] Class & Trait System
+- [x] Tracing Garbage Collector (Replacing Rc cycles)
+- [x] Static Type System (Foundation & Syntax)
 - [ ] Standard Library Expansion (FS, HTTP, OS)
 
 ---
 
-## 🛰️ Community & Contributing
-
-Quin is open-source. We welcome contributions to the compiler, VM, and standard library.
-
-**License**: MIT
-**Author**: Quin Team
+**License**: MIT  
+**Author**: MaliciousByte & The Quin Contributors

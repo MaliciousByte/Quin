@@ -1,0 +1,26 @@
+# Error Handling Test
+emit("Testing Error Handling...");
+
+attempt {
+    emit("Trying...");
+    raise "BOOM";
+} rescue (e: str) {
+    emit("Caught: " + e);
+    if e == "BOOM" {
+        emit("Rescue: PASS");
+    } else {
+        emit("Rescue: FAIL");
+    }
+} finally {
+    emit("Finally: PASS");
+}
+
+task fail() {
+    raise "Nested Failure";
+}
+
+attempt {
+    fail();
+} rescue (e: str) {
+    emit("Caught Nested: " + e);
+}

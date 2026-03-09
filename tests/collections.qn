@@ -1,0 +1,30 @@
+# Collections Test
+emit("Testing Collections...");
+
+let arr: int[] = [1, 2, 3];
+emit("Array element 1: " + arr[1]);
+if arr[1] == 2 {
+    emit("Array Indexing: PASS");
+} else {
+    emit("Array Indexing: FAIL");
+}
+
+let d: dict<str, int> = {"a": 1, "b": 2};
+emit("Dict value: " + d["b"]);
+if d["b"] == 2 {
+    emit("Dict Lookup: PASS");
+} else {
+    emit("Dict Lookup: FAIL");
+}
+
+let t: tuple<int, str> = (42, "answer");
+emit("Tuple element: " + t[1]);
+if t[1] == "answer" {
+    emit("Tuple Indexing: PASS");
+} else {
+    emit("Tuple Indexing: FAIL");
+}
+
+let s: set<int> = set {1, 2, 2, 3};
+# Note: set representation might be internal, but we can test size if we had methods
+emit("Set test complete.");

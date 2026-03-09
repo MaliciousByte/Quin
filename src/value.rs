@@ -130,6 +130,9 @@ impl fmt::Debug for Value {
 
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            Value::String(s) => write!(f, "{}", s),
+            _ => write!(f, "{:?}", self),
+        }
     }
 }

@@ -392,6 +392,11 @@ impl Parser {
         self.consume(TokenType::Rescue, "Expect 'rescue' after attempt block.")?;
         self.consume(TokenType::LeftParen, "Expect '(' after rescue.")?;
         let catch_param = self.consume(TokenType::Identifier, "Expect error variable name.")?.clone();
+        
+        if self.match_token(&[TokenType::Colon]) {
+            self.parse_type()?;
+        }
+
         self.consume(TokenType::RightParen, "Expect ')' after error variable.")?;
         self.consume(TokenType::LeftBrace, "Expect '{' after rescue parens.")?;
         let catch_body = Box::new(Stmt::Block(self.block()?));
@@ -940,6 +945,7 @@ impl Parser {
             TokenType::TypeStr,
             TokenType::TypeFloat,
             TokenType::TypeBool,
+            TokenType::Void,
         ]) {
             crate::ast::Type::Simple(self.previous().lexeme.clone())
         } else {
