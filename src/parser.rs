@@ -861,11 +861,7 @@ impl Parser {
         self.peek().ty == ty
     }
 
-    fn check_next(&self, ty: TokenType) -> bool {
-        if self.is_at_end() { return false; }
-        if self.current + 1 >= self.tokens.len() { return false; }
-        self.tokens[self.current + 1].ty == ty
-    }
+
 
     fn is_struct_init_start(&self) -> bool {
         // Look ahead for '{' followed by 'identifier :'

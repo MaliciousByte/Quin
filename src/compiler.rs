@@ -6,10 +6,10 @@ use crate::value::{Value, Function};
 use crate::obj::Obj;
 use std::rc::Rc;
 
-struct Local {
-    name: String,
-    depth: usize,
-    is_captured: bool,
+pub struct Local {
+    pub name: String,
+    pub depth: usize,
+    pub is_captured: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -143,7 +143,7 @@ impl Compiler {
                 // Emitting basic logic (not robust iterator)
                 return Err("For loops require iterator protocol or array length logic via stdlib, simplifying for VM v1.".to_string());
             }
-            Stmt::Function { name, params, variadic, is_async, is_static, is_abstract, visibility, body, .. } => {
+            Stmt::Function { name, params, variadic: _, is_async, is_static, is_abstract, visibility, body, .. } => {
                 let is_method = self.emitting_method; // Use emitting_method flag from outer compiler
                 let mut compiler = Compiler::new(&name.lexeme, *is_async, is_method, Some(self as *mut Compiler));
                 compiler.function.arity = params.len();
@@ -476,7 +476,6 @@ impl Compiler {
                 let idx = self.add_constant(Value::obj(Rc::new(Obj::Function(Rc::new(fun)))));
                 self.emit(OpCode::Closure(idx), 0);
             }
-            _ => return Err(format!("Expression type compiling not yet implemented.")),
         }
         Ok(())
     }
