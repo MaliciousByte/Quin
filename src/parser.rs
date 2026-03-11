@@ -249,8 +249,9 @@ impl Parser {
                 // Property
                 self.match_token(&[TokenType::Mut]); // consume mut if present
                 let _name = self.consume(TokenType::Identifier, "Expect property name.")?;
-                self.consume(TokenType::Colon, "Expect ':' after property name.")?;
-                self.parse_type()?;
+                if self.match_token(&[TokenType::Colon]) {
+                    self.parse_type()?;
+                }
                 self.consume(TokenType::Semicolon, "Expect ';' after property.")?;
             } else {
                 return Err("Expect method or property in class.".to_string());

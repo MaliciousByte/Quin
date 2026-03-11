@@ -4,7 +4,7 @@ emit("Testing Error Handling...");
 attempt {
     emit("Trying...");
     raise "BOOM";
-} rescue (e: str) {
+} rescue (e) {
     emit("Caught: " + e);
     if e == "BOOM" {
         emit("Rescue: PASS");

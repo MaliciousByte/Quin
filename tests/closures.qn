@@ -1,0 +1,82 @@
+# Closures & Upvalue Test
+emit("--- Testing Closures ---");
+
+# Basic closure
+task make_counter() {
+    let mut count = 0;
+    return task() {
+        count = count + 1;
+        return count;
+    };
+}
+
+let counter = make_counter();
+emit("Counter 1: " + counter());
+emit("Counter 2: " + counter());
+emit("Counter 3: " + counter());
+
+if counter() == 4 {
+    emit("Counter: PASS");
+} else {
+    emit("Counter: FAIL");
+}
+
+# Closure capturing multiple variables
+task make_adder(x) {
+    return task(y) {
+        return x + y;
+    };
+}
+
+let add5 = make_adder(5);
+let add10 = make_adder(10);
+
+if add5(3) == 8 {
+    emit("Adder(5)(3) = 8: PASS");
+} else {
+    emit("Adder(5)(3): FAIL");
+}
+
+if add10(3) == 13 {
+    emit("Adder(10)(3) = 13: PASS");
+} else {
+    emit("Adder(10)(3): FAIL");
+}
+
+# Nested closures
+task outer() {
+    let x = 10;
+    task middle() {
+        let y = 20;
+        task inner() {
+            return x + y;
+        }
+        return inner();
+    }
+    return middle();
+}
+
+let result = outer();
+if result == 30 {
+    emit("Nested closures (10+20=30): PASS");
+} else {
+    emit("Nested closures: FAIL, got " + result);
+}
+
+# Lambda with pipe
+task double(x) {
+    return x * 2;
+}
+
+task add_one(x) {
+    return x + 1;
+}
+
+let piped_result = 5 |> double |> add_one;
+if piped_result == 11 {
+    emit("Pipe (5 |> *2 |> +1 = 11): PASS");
+} else {
+    emit("Pipe: FAIL, got " + piped_result);
+}
+
+emit("--- Closures Tests Complete ---");

@@ -9,9 +9,9 @@ The primary mechanism for error handling is the `attempt` block.
 ```quin
 attempt {
     # Code that might fail
-    let result: any = risky_operation();
+    let result = risky_operation();
     emit("Success: {result}");
-} rescue (err: str) {
+} rescue (err) {
     # Code to handle the error
     emit("An error occurred: {err}");
 } finally {
@@ -29,7 +29,7 @@ attempt {
 You can manually trigger an error using the `raise` keyword.
 
 ```quin
-task divide(a: float, b: float) -> float {
+task divide(a, b) {
     if b == 0.0 {
         raise "Division by zero!";
     }

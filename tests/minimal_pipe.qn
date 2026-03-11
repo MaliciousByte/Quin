@@ -1,2 +1,2 @@
-let x: int = 5 |> task(v: int) -> int => v * 2;
+let x = 5 |> task(v) => v * 2;
 emit(x);

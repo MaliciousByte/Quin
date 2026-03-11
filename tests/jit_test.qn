@@ -1,0 +1,13 @@
+task add(a, b) {
+    return a + b;
+}
+
+emit("--- Testing JIT (Integer Add) ---");
+let mut i = 0;
+while i < 1100 {
+    add(i, 1);
+    i = i + 1;
+}
+
+emit("Final JITed call (10 + 20): " + add(10, 20));
+emit("--- JIT Test Done ---");

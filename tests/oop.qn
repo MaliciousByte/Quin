@@ -2,26 +2,26 @@
 emit("Testing OOP...");
 
 trait Greeter {
-    task greet() -> void;
+    task greet();
 }
 
 class Person with Greeter {
-    priv name: str;
-    init(name: str) {
+    priv name;
+    init(name) {
         self.name = name;
     }
     
-    task greet() -> void {
+    task greet() {
         emit("Hello, " + self.name);
     }
 }
 
-let p: Person = Person("Alice");
+let p = Person("Alice");
 p.greet();
 
 class Counter {
-    shared count: int;
-    shared task increment() -> void {
+    shared count;
+    shared task increment() {
         emit("Incrementing shared member...");
     }
 }

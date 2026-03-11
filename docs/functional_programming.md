@@ -7,12 +7,12 @@ Quin embraces functional programming concepts, making it easy to write clean, co
 In Quin, functions are called `tasks`. They are first-class citizens, meaning they can be passed as arguments, returned from other tasks, and assigned to variables.
 
 ```quin
-task square(x: int) -> int {
+task square(x) {
     return x * x;
 }
 
 # Arrow shorthand for simple tasks
-task add(a: int, b: int) -> int => a + b;
+task add(a, b) => a + b;
 ```
 
 ## Closures & Lambdas
@@ -20,8 +20,8 @@ task add(a: int, b: int) -> int => a + b;
 Quin supports anonymous tasks and full lexical scoping with variable capture.
 
 ```quin
-let multiplier: any = task(factor: int) -> any => task(x: int) -> int => x * factor;
-let double: any = multiplier(2);
+let multiplier = task(factor) => task(x) => x * factor;
+let double = multiplier(2);
 emit(double(5)); # 10
 ```
 

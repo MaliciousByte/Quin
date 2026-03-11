@@ -1,0 +1,22 @@
+task test_hot_loop() {
+    let mut i = 0;
+    while i < 1100 {
+        i = i + 1;
+    }
+}
+
+task test_hot_call() {
+    # empty
+}
+
+emit("--- Testing Hot Loop ---");
+test_hot_loop();
+
+emit("--- Testing Hot Calls ---");
+let mut j = 0;
+while j < 1100 {
+    test_hot_call();
+    j = j + 1;
+}
+
+emit("--- Testing Done ---");

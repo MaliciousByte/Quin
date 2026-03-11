@@ -3,6 +3,7 @@ use crate::ast::{Expr, Stmt, Literal};
 use crate::chunk::{Chunk, OpCode};
 use crate::token::{Token, TokenType};
 use crate::value::{Value, Function};
+use crate::obj::Obj;
 use std::rc::Rc;
 
 struct Local {
@@ -31,11 +32,14 @@ impl Compiler {
     pub fn new(name: &str, is_async: bool, is_method: bool, parent: Option<*mut Compiler>) -> Self {
         let mut compiler = Compiler {
             function: Function {
-                name: name.to_string(),
+                name: Rc::from(name),
                 arity: 0,
                 is_async,
                 chunk: Chunk::new(),
                 upvalues: Vec::new(),
+                call_count: std::sync::atomic::AtomicU32::new(0),
+                is_hot: std::sync::atomic::AtomicBool::new(false),
+                native_ptr: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
             },
             parent,
             locals: Vec::new(),
@@ -81,7 +85,7 @@ impl Compiler {
                                 is_captured: false,
                             });
                         } else {
-                            let idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+                            let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
                             self.emit(OpCode::DefineGlobal(idx), name.line);
                         }
                     }
@@ -95,22 +99,33 @@ impl Compiler {
                 }
                 self.end_scope();
             }
-            Stmt::If { condition, then_branch, elif_branches: _, else_branch } => {
+            Stmt::If { condition, then_branch, elif_branches, else_branch } => {
                 self.compile_expr(condition)?;
                 let then_jump = self.emit_jump(OpCode::JumpIfFalse(0));
-                self.emit(OpCode::Pop, 0); // pop condition
+                self.emit(OpCode::Pop, 0);
                 self.compile_stmt(then_branch)?;
-                let else_jump = self.emit_jump(OpCode::Jump(0));
+                let mut end_jumps = vec![self.emit_jump(OpCode::Jump(0))];
                 
                 self.patch_jump(then_jump);
-                self.emit(OpCode::Pop, 0); // pop condition for elses
+                self.emit(OpCode::Pop, 0);
                 
-                // Ignoring elif branches for simplicity in this compiler version
+                for (elif_cond, elif_body) in elif_branches {
+                    self.compile_expr(elif_cond)?;
+                    let elif_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+                    self.emit(OpCode::Pop, 0);
+                    self.compile_stmt(elif_body)?;
+                    end_jumps.push(self.emit_jump(OpCode::Jump(0)));
+                    self.patch_jump(elif_jump);
+                    self.emit(OpCode::Pop, 0);
+                }
+                
                 if let Some(eb) = else_branch {
                     self.compile_stmt(eb)?;
                 }
                 
-                self.patch_jump(else_jump);
+                for jump in end_jumps {
+                    self.patch_jump(jump);
+                }
             }
             Stmt::While { condition, body } => {
                 let loop_start = self.current_chunk().code.len();
@@ -151,7 +166,7 @@ impl Compiler {
                 compiler.emit(OpCode::Return, 0);
 
                 let fun = compiler.function;
-                let idx = self.add_constant(Value::Function(Rc::new(fun)));
+                let idx = self.add_constant(Value::obj(Rc::new(Obj::Function(Rc::new(fun)))));
                 
                 if self.emitting_method {
                     self.emit(OpCode::Closure(idx), name.line);
@@ -159,7 +174,7 @@ impl Compiler {
                     self.emit(OpCode::Closure(idx), name.line);
                     self.locals.push(Local { name: name.lexeme.clone(), depth: self.scope_depth, is_captured: false });
                 } else {
-                    let name_idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+                    let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
                     self.emit(OpCode::Closure(idx), name.line);
                     self.emit(OpCode::DefineGlobal(name_idx), name.line);
                 }
@@ -202,17 +217,17 @@ impl Compiler {
             }
             Stmt::Struct { name, .. } => {
                 // Register struct as a global "type" name (Value::Null for now)
-                let idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+                let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
                 self.emit(OpCode::Null, name.line);
                 self.emit(OpCode::DefineGlobal(idx), name.line);
             }
             Stmt::Class { name, methods, is_abstract, interfaces, superclass } => {
                 let _ = is_abstract;
                 let _ = interfaces;
-                let name_idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
                 
                 if let Some(super_token) = superclass {
-                    let s_idx = self.add_constant(Value::String(Rc::new(super_token.lexeme.clone())));
+                    let s_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(super_token.lexeme.clone())))));
                     self.emit(OpCode::GetGlobal(s_idx), super_token.line);
                 } else {
                     self.emit(OpCode::Null, name.line);
@@ -224,7 +239,7 @@ impl Compiler {
                 for method in methods {
                     if let Stmt::Function { name: method_name, .. } = method {
                         self.compile_stmt(method)?;
-                        let m_idx = self.add_constant(Value::String(Rc::new(method_name.lexeme.clone())));
+                        let m_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(method_name.lexeme.clone())))));
                         self.emit(OpCode::Method(m_idx), name.line);
                     }
                 }
@@ -234,7 +249,7 @@ impl Compiler {
             }
             Stmt::Interface { name, .. } => {
                 // Interfaces are purely for static analysis right now
-                let idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+                let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
                 self.emit(OpCode::Null, name.line);
                 self.emit(OpCode::DefineGlobal(idx), name.line);
             }
@@ -248,7 +263,7 @@ impl Compiler {
                 self.emit(OpCode::Pop, 0); // pop match expr
             }
             Stmt::Enum { name, .. } => {
-                 let name_idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+                 let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
                  self.emit(OpCode::Null, name.line);
                  self.emit(OpCode::DefineGlobal(name_idx), name.line);
             }
@@ -256,9 +271,9 @@ impl Compiler {
                 // Type aliases are purely for static analysis, nothing to emit
             }
             Stmt::Emit(expr) => {
-                self.compile_expr(expr)?;
-                let name_idx = self.add_constant(Value::String(Rc::new("emit".to_string())));
+                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from("emit")))));
                 self.emit(OpCode::GetGlobal(name_idx), 0);
+                self.compile_expr(expr)?;
                 self.emit(OpCode::Call(1), 0);
                 self.emit(OpCode::Pop, 0);
             }
@@ -274,18 +289,18 @@ impl Compiler {
             Expr::Literal(lit) => {
                 match lit {
                     Literal::Int(i) => {
-                        let idx = self.add_constant(Value::Int(*i));
+                        let idx = self.add_constant(Value::int(*i));
                         self.emit(OpCode::Constant(idx), 0);
                     }
                     Literal::Float(f) => {
-                        let idx = self.add_constant(Value::Float(*f));
+                        let idx = self.add_constant(Value::float(*f));
                         self.emit(OpCode::Constant(idx), 0);
                     }
                     Literal::Bool(b) => {
                         if *b { self.emit(OpCode::True, 0); } else { self.emit(OpCode::False, 0); }
                     }
                     Literal::String(s) => {
-                        let idx = self.add_constant(Value::String(Rc::new(s.clone())));
+                        let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(s.clone())))));
                         self.emit(OpCode::Constant(idx), 0);
                     }
                     Literal::Null => {
@@ -313,6 +328,14 @@ impl Compiler {
                     self.patch_jump(jump_end);
                 } else {
                     return Err(format!("Unknown logical operator {:?}", operator.ty));
+                }
+            }
+            Expr::Unary { operator, right } => {
+                self.compile_expr(right)?;
+                match operator.ty {
+                    TokenType::Minus => self.emit(OpCode::Negate, operator.line),
+                    TokenType::Bang => self.emit(OpCode::Not, operator.line),
+                    _ => return Err(format!("Unknown unary operator {:?}", operator.ty)),
                 }
             }
             Expr::Binary { left, operator, right } => {
@@ -348,22 +371,22 @@ impl Compiler {
             }
             Expr::Get { object, name } => {
                 self.compile_expr(object)?;
-                let name_idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.as_str())))));
                 self.emit(OpCode::GetProperty(name_idx), name.line);
             }
             Expr::Set { object, name, value } => {
                 self.compile_expr(object)?;
                 self.compile_expr(value)?;
-                let name_idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.as_str())))));
                 self.emit(OpCode::SetProperty(name_idx), name.line);
             }
              Expr::StructInit { name, fields } => {
                 for (field_name, val) in fields {
-                    let field_idx = self.add_constant(Value::String(Rc::new(field_name.lexeme.clone())));
+                    let field_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(field_name.lexeme.as_str())))));
                     self.emit(OpCode::Constant(field_idx), field_name.line);
                     self.compile_expr(val)?;
                 }
-                let idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+                let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.as_str())))));
                 self.emit(OpCode::BuildInstance(idx, fields.len() as u8), name.line);
             }
             Expr::Dict { entries } => {
@@ -388,7 +411,7 @@ impl Compiler {
             Expr::OptionalGet { object, name } => {
                 self.compile_expr(object)?;
                 let jump = self.emit_jump(OpCode::JumpIfNull(0)); 
-                let name_idx = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.as_str())))));
                 self.emit(OpCode::GetProperty(name_idx), name.line);
                 self.patch_jump(jump);
             }
@@ -433,7 +456,7 @@ impl Compiler {
                     crate::ast::Type::Simple(s) => s.clone(),
                     _ => "complex_type".to_string(), // Simplified
                 };
-                let idx = self.add_constant(Value::String(Rc::new(type_name)));
+                let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(type_name.as_str())))));
                 self.emit(OpCode::Cast(idx), 0);
             }
             Expr::Lambda { params, body, is_async } => {
@@ -450,7 +473,7 @@ impl Compiler {
                 compiler.emit(OpCode::Return, 0);
 
                 let fun = compiler.function;
-                let idx = self.add_constant(Value::Function(Rc::new(fun)));
+                let idx = self.add_constant(Value::obj(Rc::new(Obj::Function(Rc::new(fun)))));
                 self.emit(OpCode::Closure(idx), 0);
             }
             _ => return Err(format!("Expression type compiling not yet implemented.")),
@@ -472,7 +495,7 @@ impl Compiler {
                 self.emit(OpCode::GetUpvalue(arg), name.line);
             }
         } else {
-            let arg = self.add_constant(Value::String(Rc::new(name.lexeme.clone())));
+            let arg = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.as_str())))));
             if can_assign {
                 self.emit(OpCode::SetGlobal(arg), name.line);
             } else {
@@ -527,7 +550,11 @@ impl Compiler {
         self.scope_depth -= 1;
         while let Some(local) = self.locals.last() {
             if local.depth > self.scope_depth {
-                self.emit(OpCode::Pop, 0);
+                if local.is_captured {
+                    self.emit(OpCode::CloseUpvalue, 0);
+                } else {
+                    self.emit(OpCode::Pop, 0);
+                }
                 self.locals.pop();
             } else {
                 break;

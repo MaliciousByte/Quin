@@ -1,9 +1,9 @@
 # Basics Test
 emit("Testing Basics...");
 
-let a: int = 10;
-let b: int = 20;
-let sum: int = a + b;
+let a = 10;
+let b = 20;
+let sum = a + b;
 emit("Sum: " + sum); # Expected 30
 
 if sum == 30 {
@@ -12,8 +12,8 @@ if sum == 30 {
     emit("Addition: FAIL");
 }
 
-let mut i: int = 0;
-let mut total: int = 0;
+let mut i = 0;
+let mut total = 0;
 while i < 5 {
     total = total + i;
     i = i + 1;
@@ -25,7 +25,7 @@ if total == 10 {
     emit("While Loop: FAIL");
 }
 
-let s: str = "Hello" + " " + "World";
+let s = "Hello" + " " + "World";
 if s == "Hello World" {
     emit("String Concatenation: PASS");
 } else {

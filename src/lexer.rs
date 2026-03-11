@@ -176,7 +176,15 @@ impl Lexer {
     }
 
     fn string(&mut self) -> Result<Option<Token>, String> {
-        while self.peek() != '"' && !self.is_at_end() {
+        while !self.is_at_end() {
+            if self.peek() == '"' { break; }
+            if self.peek() == '\\' {
+                self.advance(); // consume '\'
+                if !self.is_at_end() {
+                    self.advance(); // consume escaped char
+                }
+                continue;
+            }
             if self.peek() == '\n' {
                 self.line += 1;
             }

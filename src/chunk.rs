@@ -1,4 +1,5 @@
 use crate::value::Value;
+use std::cell::RefCell;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OpCode {
@@ -65,11 +66,18 @@ pub enum OpCode {
     PopHandler,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ICEntry {
+    pub last_shape_id: usize,
+    pub offset: usize,
+}
+
 #[derive(Clone, Default)]
 pub struct Chunk {
     pub code: Vec<OpCode>,
     pub constants: Vec<Value>,
     pub lines: Vec<usize>,
+    pub property_caches: RefCell<Vec<Option<ICEntry>>>,
 }
 
 impl Chunk {
@@ -78,12 +86,14 @@ impl Chunk {
             code: Vec::new(),
             constants: Vec::new(),
             lines: Vec::new(),
+            property_caches: RefCell::new(Vec::new()),
         }
     }
 
     pub fn write(&mut self, op: OpCode, line: usize) {
         self.code.push(op);
         self.lines.push(line);
+        self.property_caches.borrow_mut().push(None); // Initialize cache slot
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {

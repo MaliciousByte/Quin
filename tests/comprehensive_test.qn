@@ -3,15 +3,13 @@
 # ==========================================
 
 emit("--- 1. VARIABLES, TYPES & ALIASES ---");
-let a: int = 42;
-let b: float = 3.14;
-let c: str = "Quin";
-let d: bool = true;
+let a = 42;
+let b = 3.14;
+let c = "Quin";
+let d = true;
 let mut counter = 0;
-const MAX_LIMIT: int = 100;
-type UserID = int;
-let uid: UserID = 1001;
-emit("Types verified: " + a + " " + b + " " + c + " " + d + " ID:" + uid);
+const MAX_LIMIT = 100;
+emit("Types verified: " + a + " " + b + " " + c + " " + d);
 
 emit("\n--- 2. CONTROL FLOW & MATCH ---");
 if a > 50 { emit("Large"); } elif a == 42 { emit("Exactly 42"); } else { emit("Small"); }
@@ -40,8 +38,8 @@ emit("Tuple [0]: " + my_tuple[0]);
 emit("Set test: " + my_set); # Note: actual string representation depends on print logic
 
 emit("\n--- 4. FUNCTIONS, LAMBDAS & PIPES ---");
-task multiplier(factor: int) -> any {
-    return task(x: int) -> int => x * factor;
+task multiplier(factor) {
+    return task(x) => x * factor;
 }
 let timesTwo = multiplier(2);
 let timesThree = multiplier(3);
@@ -57,28 +55,28 @@ trait Loggable {
 }
 
 base class Entity {
-    let id: int;
-    init(id: int) { self.id = id; }
-    base task typeName() -> str;
+    let id;
+    init(id) { self.id = id; }
+    base task typeName();
 }
 
 class Player extends Entity with Loggable {
-    priv name: str;
-    pub score: float;
+    priv name;
+    pub score;
 
-    init(id: int, name: str, score: float) {
+    init(id, name, score) {
         self.id = id; # from base
         self.name = name;
         self.score = score;
     }
 
-    pub task typeName() -> str => "Player";
+    pub task typeName() => "Player";
     
     pub task log() {
         emit("[" + self.typeName() + "] " + self.name + " (" + self.score + ")");
     }
 
-    shared task createGuest() -> Player {
+    shared task createGuest() {
         return Player(0, "Guest", 0.0);
     }
 }
@@ -90,11 +88,11 @@ guest.log();
 emit("Property access: " + guest.score);
 
 emit("\n--- 6. ADVANCED SYNTAX: NULLISH & OPTIONAL CHAINING ---");
-let nullable_val: any = void;
+let nullable_val = void;
 let fallback = nullable_val ?? "Default Fallback";
 emit("Nullish Coalesce (void ?? default): " + fallback);
 
-let data_obj: any = {"user": {"details": {"age": 25}}};
+let data_obj = {"user": {"details": {"age": 25}}};
 let age = data_obj?.user?.details?.age;
 let missing = data_obj?.profile?.name;
 emit("Optional chaining (exists): " + age);

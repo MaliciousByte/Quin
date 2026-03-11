@@ -19,20 +19,19 @@ const PI = 3.14159;
 
 ## Data Types
 
-Quin is a statically typed language that balances rigor with developer-friendly syntax.
+Quin is a dynamically typed language. Variable types are determined at runtime, and a variable's type can change throughout its lifetime.
 
 - `int`: Signed 64-bit integer.
 - `float`: 64-bit floating point.
 - `str`: UTF-8 encoded string.
 - `bool`: `true` or `false`.
-- `any`: A type that can hold any value.
-- `void`: Represents the absence of a value.
+- `void`: Represents the absence of a value (null/nil).
 
-Type annotations are mandatory for some contexts and recommended everywhere else for clarity:
+While the language is dynamic, you can still use descriptive names or the `type_of()` function to inspect values:
 ```quin
-let count: int = 5;
-let name: str = "Quin";
-let is_valid: bool = true;
+let count = 5;
+let name = "Quin";
+emit(type_of(count)); # "int"
 ```
 
 ## Control Flow

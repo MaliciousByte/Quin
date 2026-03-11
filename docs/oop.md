@@ -7,17 +7,17 @@ Quin features a robust object-oriented system with classes, interfaces, and shar
 Classes are defined with the `class` keyword. Inheritance is done using `extends`.
 
 ```quin
-base class Animal {
-    let name: str;
-    init(name: str) {
+class Animal {
+    let name;
+    init(name) {
         self.name = name;
     }
     
-    base task make_noise();
+    task make_noise();
 }
 
 class Dog extends Animal {
-    task make_noise() -> void {
+    task make_noise() {
         emit("{self.name} says: Woof!");
     }
 }
@@ -29,11 +29,11 @@ Traits define a contract that classes can implement using the `with` keyword.
 
 ```quin
 trait Sound {
-    task make_noise() -> void;
+    task make_noise();
 }
 
 class Cat with Sound {
-    task make_noise() -> void {
+    task make_noise() {
         emit("Meow!");
     }
 }
@@ -51,10 +51,10 @@ Quin supports access control for class members:
 
 ```quin
 class User {
-    priv id: int;
-    pub username: str;
+    priv id;
+    pub username;
     
-    init(id: int, name: str) {
+    init(id, name) {
         self.id = id;
         self.username = name;
     }
@@ -69,6 +69,6 @@ Replace static members with the `shared` keyword. Shared members belong to the c
 class MathUtils {
     shared const PI = 3.14159;
     
-    shared task circle_area(r: float) -> float => self.PI * r * r;
+    shared task circle_area(r) => self.PI * r * r;
 }
 ```

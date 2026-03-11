@@ -1,10 +1,10 @@
 # Functional Test
 emit("Testing Functional...");
 
-task square(x: int) -> int => x * x;
-task add(a: int, b: int) -> int => a + b;
+task square(x) => x * x;
+task add(a, b) => a + b;
 
-let result: int = 5 |> square |> task(val: int) -> int => val + 1;
+let result = 5 |> square |> task(val) => val + 1;
 emit("Piped result: " + result); # 26
 if result == 26 {
     emit("Piping: PASS");
@@ -12,9 +12,9 @@ if result == 26 {
     emit("Piping: FAIL");
 }
 
-let multiplier: any = task(f: int) -> (any) => task(x: int) -> int => x * f;
-let triple: any = multiplier(3);
-let val: int = triple(10);
+let multiplier = task(f) => task(x) => x * f;
+let triple = multiplier(3);
+let val = triple(10);
 emit("Closure value: " + val); # 30
 if val == 30 {
     emit("Closures: PASS");

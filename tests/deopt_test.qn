@@ -1,0 +1,17 @@
+task add(a, b) {
+    return a + b;
+}
+
+emit("--- Testing JIT Deoptimization ---");
+let mut i = 0;
+while i < 1100 {
+    add(i, 1);
+    i = i + 1;
+}
+
+emit("Triggering Deopt by passing float to int-specialized JIT...");
+# JIT assumes ints. Passing 1.5 triggers deopt to interpreter.
+# Interpreter handles 10 + 1.5 correctly as float 11.5.
+let res = add(10, 1.5);
+emit("Result after Deopt: " + res);
+emit("--- Deopt Test Done ---");
