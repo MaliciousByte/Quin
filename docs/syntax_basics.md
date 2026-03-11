@@ -55,7 +55,8 @@ while i < 10 {
 ```
 
 ### Match
-A powerful pattern matching system.
+> [!NOTE]
+> The `match` system is currently in development and supported in the parser, but full bytecode emission is pending in the compiler.
 
 ```quin
 match a {

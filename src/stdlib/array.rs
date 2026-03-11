@@ -25,9 +25,18 @@ pub fn register(vm: &mut VM) {
 
     let name = vm.intern("join");
     vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_join))));
+
+    let name = vm.intern("map");
+    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_map))));
+
+    let name = vm.intern("filter");
+    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_filter))));
+
+    let name = vm.intern("len");
+    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_len))));
 }
 
-fn native_push(args: &[Value]) -> Result<Value, String> {
+fn native_push(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 2 { return Err("push expects 2 arguments (array, value)".to_string()); }
     if args[0].is_obj() {
         if let Obj::Array(arr) = &*args[0].as_obj() {
@@ -38,7 +47,7 @@ fn native_push(args: &[Value]) -> Result<Value, String> {
     Err("push: first argument must be an array".to_string())
 }
 
-fn native_pop(args: &[Value]) -> Result<Value, String> {
+fn native_pop(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() { return Err("pop expects 1 argument (array)".to_string()); }
     if args[0].is_obj() {
         if let Obj::Array(arr) = &*args[0].as_obj() {
@@ -48,7 +57,7 @@ fn native_pop(args: &[Value]) -> Result<Value, String> {
     Err("pop: argument must be an array".to_string())
 }
 
-fn native_slice(args: &[Value]) -> Result<Value, String> {
+fn native_slice(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() < 2 || args.len() > 3 { return Err("slice expects 2-3 arguments (array, start, end?)".to_string()); }
     if args[0].is_obj() {
         if let Obj::Array(arr) = &*args[0].as_obj() {
@@ -67,7 +76,7 @@ fn native_slice(args: &[Value]) -> Result<Value, String> {
     Err("slice: first argument must be an array".to_string())
 }
 
-fn native_reverse(args: &[Value]) -> Result<Value, String> {
+fn native_reverse(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() { return Err("reverse expects 1 argument (array)".to_string()); }
     if args[0].is_obj() {
         if let Obj::Array(arr) = &*args[0].as_obj() {
@@ -78,7 +87,7 @@ fn native_reverse(args: &[Value]) -> Result<Value, String> {
     Err("reverse: argument must be an array".to_string())
 }
 
-fn native_sort(args: &[Value]) -> Result<Value, String> {
+fn native_sort(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() { return Err("sort expects 1 argument (array)".to_string()); }
     if args[0].is_obj() {
         if let Obj::Array(arr) = &*args[0].as_obj() {
@@ -98,7 +107,7 @@ fn native_sort(args: &[Value]) -> Result<Value, String> {
     Err("sort: argument must be an array".to_string())
 }
 
-fn native_range(args: &[Value]) -> Result<Value, String> {
+fn native_range(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() || args.len() > 3 { return Err("range expects 1-3 arguments (end) or (start, end) or (start, end, step)".to_string()); }
     let (start, end, step) = match args.len() {
         1 => {
@@ -136,7 +145,7 @@ fn native_range(args: &[Value]) -> Result<Value, String> {
     Ok(Value::obj(Rc::new(Obj::Array(RefCell::new(result)))))
 }
 
-fn native_join(args: &[Value]) -> Result<Value, String> {
+fn native_join(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 2 { return Err("join expects 2 arguments (array, separator)".to_string()); }
     if args[0].is_obj() {
         if let Obj::Array(arr) = &*args[0].as_obj() {
@@ -151,8 +160,75 @@ fn native_join(args: &[Value]) -> Result<Value, String> {
             };
             let elements = arr.borrow();
             let parts: Vec<String> = elements.iter().map(|v| format!("{}", v)).collect();
-            return Ok(Value::obj(Rc::new(Obj::String(Rc::from(parts.join(&sep).as_str())))));
+            let interned = vm.intern(&parts.join(&sep));
+            return Ok(Value::obj(Rc::new(Obj::String(interned))));
         }
     }
     Err("join: first argument must be an array".to_string())
+}
+
+fn native_map(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
+    if args.len() != 2 { return Err("map expects 2 arguments (array, callback)".to_string()); }
+    let (elements, callback) = if args[0].is_obj() {
+        if let Obj::Array(arr) = &*args[0].as_obj() {
+            (arr.borrow().clone(), args[1].clone())
+        } else {
+            return Err("map: first argument must be an array".to_string());
+        }
+    } else {
+        return Err("map: first argument must be an array".to_string());
+    };
+
+    let mut result_elements = Vec::with_capacity(elements.len());
+    for element in elements {
+        vm.push(callback.clone());
+        vm.push(element);
+        vm.call_value(1)?;
+        vm.run()?;
+        result_elements.push(vm.pop()?);
+    }
+
+    Ok(Value::obj(Rc::new(Obj::Array(RefCell::new(result_elements)))))
+}
+
+fn native_filter(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
+    if args.len() != 2 { return Err("filter expects 2 arguments (array, callback)".to_string()); }
+    let (elements, callback) = if args[0].is_obj() {
+        if let Obj::Array(arr) = &*args[0].as_obj() {
+            (arr.borrow().clone(), args[1].clone())
+        } else {
+            return Err("filter: first argument must be an array".to_string());
+        }
+    } else {
+        return Err("filter: first argument must be an array".to_string());
+    };
+
+    let mut result_elements = Vec::new();
+    for element in elements {
+        vm.push(callback.clone());
+        vm.push(element.clone());
+        vm.call_value(1)?;
+        vm.run()?;
+        let res = vm.pop()?;
+        if !vm.is_falsey(&res) {
+            result_elements.push(element);
+        }
+    }
+
+    Ok(Value::obj(Rc::new(Obj::Array(RefCell::new(result_elements)))))
+}
+
+fn native_len(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() { return Err("len expects 1 argument".to_string()); }
+    if args[0].is_obj() {
+        match &*args[0].as_obj() {
+            Obj::Array(arr) => return Ok(Value::int(arr.borrow().len() as i64)),
+            Obj::String(s) => return Ok(Value::int(s.len() as i64)),
+            Obj::Dict(m) => return Ok(Value::int(m.borrow().len() as i64)),
+            Obj::Set(s) => return Ok(Value::int(s.borrow().len() as i64)),
+            Obj::Tuple(t) => return Ok(Value::int(t.len() as i64)),
+            _ => {}
+        }
+    }
+    Err("len: argument must be a collection or string".to_string())
 }

@@ -1,0 +1,63 @@
+# Functional & Closures Test
+emit("Running functional and closures tests...");
+
+# Simple Closures
+task makeCounter() {
+    let mut count = 0;
+    return task() {
+        count = count + 1;
+        return count;
+    };
+}
+
+let counter = makeCounter();
+assert(counter() == 1, "Counter first call failed");
+assert(counter() == 2, "Counter second call failed");
+
+# Nested Closures (Upvalues)
+task outer(x) {
+    task inner(y) {
+        return x + y;
+    }
+    return inner;
+}
+
+let addFive = outer(5);
+assert(addFive(10) == 15, "Nested closure failed");
+
+# Higher-Order Functions (Recursion support)
+task applyTwice(f, x) {
+    return f(f(x));
+}
+
+task square(n) => n * n;
+assert(applyTwice(square, 3) == 81, "Higher-order function failed");
+
+# Stdlib Map/Filter (Recursive Native calls)
+let nums = [1, 2, 3, 4, 5];
+let doubled = map(nums, task(x) => x * 2);
+assert(len(doubled) == 5, "Map length failed");
+assert(doubled[0] == 2, "Map first element failed");
+assert(doubled[4] == 10, "Map last element failed");
+
+let bigNums = filter(nums, task(x) => x > 3);
+assert(len(bigNums) == 2, "Filter length failed");
+assert(bigNums[0] == 4, "Filter first element failed");
+
+# Deeply nested upvalues
+task level1(a) {
+    return task(b) {
+        return task(c) {
+            return a + b + c;
+        };
+    };
+}
+assert(level1(1)(2)(3) == 6, "Deeply nested upvalues failed");
+
+# Pipe Operator
+let piped = 10 
+    |> task(n) => n * 2
+    |> task(n) => n + 5;
+assert(piped == 25, "Pipe operator failed");
+
+emit("Functional and closures tests passed!");

@@ -67,9 +67,13 @@ emit(contains("hello", "ell"));          # true
 | `range(start, end)` | `int, int → int[]` | `[start, ..., end-1]` |
 | `range(start, end, step)` | `int, int, int → int[]` | With step |
 | `join(arr, sep)` | `array, str → str` | Join elements |
+| `map(arr, task)` | `array, task → array` | Transform elements |
+| `filter(arr, task)` | `array, task → array` | Filter elements |
 
 ```quin
 let nums = range(1, 6);  # [1, 2, 3, 4, 5]
+let squares = map(nums, task(x) => x * x);
+let evens = filter(nums, task(x) => x > 2);
 push(nums, 6);
 sort(nums);
 emit(join(nums, ", "));  # "1, 2, 3, 4, 5, 6"
@@ -86,9 +90,11 @@ emit(join(nums, ", "));  # "1, 2, 3, 4, 5, 6"
 | `read_file(path)` | `str → str` | Read file contents |
 | `write_file(path, data)` | `str, str → void` | Write file |
 | `type_of(val)` | `any → str` | Runtime type name |
+| `assert(cond, msg?)` | `bool, str? → void` | Fail if condition is falsey |
 
 ```quin
 let name = input("What's your name? ");
+assert(len(name) > 0, "Name cannot be empty");
 emit("Hello, " + name + "!");
 emit(type_of(42));    # "int"
 emit(type_of(3.14));  # "float"

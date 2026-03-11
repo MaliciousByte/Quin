@@ -35,8 +35,9 @@ quin hello.qn
 ```
 
 ## Running Tests
-To verify your installation, you can run the comprehensive test suite:
+To verify your installation, you can run the organized test suite using the master runner:
 
 ```bash
-quin comprehensive_test.qn
+# On Windows
+powershell -ExecutionPolicy Bypass -File tests/run_all.ps1
 ```

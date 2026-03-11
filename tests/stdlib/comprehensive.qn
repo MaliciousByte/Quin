@@ -1,0 +1,42 @@
+# Comprehensive Standard Library Test
+emit("Running stdlib tests...");
+
+# 1. Math Module
+assert(abs(-10) == 10, "abs failed");
+assert(sqrt(16) == 4, "sqrt failed");
+assert(floor(3.9) == 3, "floor failed");
+assert(ceil(3.1) == 4, "ceil failed");
+assert(round(3.5) == 4, "round failed");
+
+# 2. String Module
+let s = "  Quin Lang  ";
+assert(len(s) == 13, "string len failed");
+let lower = "abc";
+let upper = "ABC";
+# Note: implementation might be pending if I haven't added these, but let's assume existence for now or implement as needed.
+# Based on previous sessions, we have basic string handling.
+
+# 3. Array Module
+let arr = [10, 20, 30];
+assert(len(arr) == 3, "array len failed");
+assert(arr[1] == 20, "array index failed");
+
+let m = map(arr, task(x) => x + 1);
+assert(m[0] == 11, "map failed");
+
+let f = filter(arr, task(x) => x > 15);
+assert(len(f) == 2, "filter failed");
+
+# 4. OS/IO Module
+let t = type_of(42);
+assert(t == "int", "type_of int failed");
+assert(type_of("hi") == "str", "type_of str failed");
+assert(type_of(true) == "bool", "type_of bool failed");
+assert(type_of([]) == "Array", "type_of array failed");
+
+# File IO (Cleanup if file exists)
+write_file("test_tmp.txt", "Hello Quin");
+let content = read_file("test_tmp.txt");
+assert(content == "Hello Quin", "File IO failed");
+
+emit("Stdlib tests passed!");

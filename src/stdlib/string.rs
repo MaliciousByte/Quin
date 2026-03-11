@@ -50,7 +50,7 @@ fn extract_string(v: &Value) -> Result<String, String> {
     Err("Expected a string".to_string())
 }
 
-fn native_len(args: &[Value]) -> Result<Value, String> {
+fn native_len(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = args.first().ok_or("len expects 1 argument")?;
     if v.is_obj() {
         match &*v.as_obj() {
@@ -65,66 +65,71 @@ fn native_len(args: &[Value]) -> Result<Value, String> {
     Err("len: unsupported type".to_string())
 }
 
-fn native_upper(args: &[Value]) -> Result<Value, String> {
+fn native_upper(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let s = extract_string(args.first().ok_or("upper expects 1 argument")?)?;
-    Ok(Value::obj(Rc::new(Obj::String(Rc::from(s.to_uppercase().as_str())))))
+    let interned = vm.intern(&s.to_uppercase());
+    Ok(Value::obj(Rc::new(Obj::String(interned))))
 }
 
-fn native_lower(args: &[Value]) -> Result<Value, String> {
+fn native_lower(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let s = extract_string(args.first().ok_or("lower expects 1 argument")?)?;
-    Ok(Value::obj(Rc::new(Obj::String(Rc::from(s.to_lowercase().as_str())))))
+    let interned = vm.intern(&s.to_lowercase());
+    Ok(Value::obj(Rc::new(Obj::String(interned))))
 }
 
-fn native_trim(args: &[Value]) -> Result<Value, String> {
+fn native_trim(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let s = extract_string(args.first().ok_or("trim expects 1 argument")?)?;
-    Ok(Value::obj(Rc::new(Obj::String(Rc::from(s.trim())))))
+    let interned = vm.intern(s.trim());
+    Ok(Value::obj(Rc::new(Obj::String(interned))))
 }
 
-fn native_contains(args: &[Value]) -> Result<Value, String> {
+fn native_contains(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 2 { return Err("contains expects 2 arguments".to_string()); }
     let haystack = extract_string(&args[0])?;
     let needle = extract_string(&args[1])?;
     Ok(Value::bool(haystack.contains(&needle)))
 }
 
-fn native_replace(args: &[Value]) -> Result<Value, String> {
+fn native_replace(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 3 { return Err("replace expects 3 arguments (str, from, to)".to_string()); }
     let s = extract_string(&args[0])?;
     let from = extract_string(&args[1])?;
     let to = extract_string(&args[2])?;
-    Ok(Value::obj(Rc::new(Obj::String(Rc::from(s.replace(&from, &to).as_str())))))
+    let interned = vm.intern(&s.replace(&from, &to));
+    Ok(Value::obj(Rc::new(Obj::String(interned))))
 }
 
-fn native_split(args: &[Value]) -> Result<Value, String> {
+fn native_split(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 2 { return Err("split expects 2 arguments (str, delimiter)".to_string()); }
     let s = extract_string(&args[0])?;
     let delim = extract_string(&args[1])?;
     let parts: Vec<Value> = s.split(&delim)
-        .map(|p| Value::obj(Rc::new(Obj::String(Rc::from(p)))))
+        .map(|p| Value::obj(Rc::new(Obj::String(vm.intern(p)))))
         .collect();
     Ok(Value::obj(Rc::new(Obj::Array(std::cell::RefCell::new(parts)))))
 }
 
-fn native_starts_with(args: &[Value]) -> Result<Value, String> {
+fn native_starts_with(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 2 { return Err("starts_with expects 2 arguments".to_string()); }
     let s = extract_string(&args[0])?;
     let prefix = extract_string(&args[1])?;
     Ok(Value::bool(s.starts_with(&prefix)))
 }
 
-fn native_ends_with(args: &[Value]) -> Result<Value, String> {
+fn native_ends_with(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 2 { return Err("ends_with expects 2 arguments".to_string()); }
     let s = extract_string(&args[0])?;
     let suffix = extract_string(&args[1])?;
     Ok(Value::bool(s.ends_with(&suffix)))
 }
 
-fn native_to_str(args: &[Value]) -> Result<Value, String> {
+fn native_to_str(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = args.first().ok_or("to_str expects 1 argument")?;
-    Ok(Value::obj(Rc::new(Obj::String(Rc::from(format!("{}", v).as_str())))))
+    let interned = vm.intern(&format!("{}", v));
+    Ok(Value::obj(Rc::new(Obj::String(interned))))
 }
 
-fn native_to_int(args: &[Value]) -> Result<Value, String> {
+fn native_to_int(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = args.first().ok_or("to_int expects 1 argument")?;
     if v.is_int() { return Ok(v.clone()); }
     if v.is_float() { return Ok(Value::int(v.as_float() as i64)); }
@@ -137,7 +142,7 @@ fn native_to_int(args: &[Value]) -> Result<Value, String> {
     Err("to_int: unsupported type".to_string())
 }
 
-fn native_to_float(args: &[Value]) -> Result<Value, String> {
+fn native_to_float(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = args.first().ok_or("to_float expects 1 argument")?;
     if v.is_float() { return Ok(v.clone()); }
     if v.is_int() { return Ok(Value::float(v.as_int() as f64)); }

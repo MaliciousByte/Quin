@@ -1,0 +1,70 @@
+# OOP: Classes, Traits, and Structs Test
+emit("Running OOP tests...");
+
+# 1. Structs (Simple Data Objects with Shape transitions)
+struct Point {
+    x,
+    y
+}
+
+let p1 = Point { x: 10, y: 20 };
+assert(p1.x == 10, "Struct x failed");
+assert(p1.y == 20, "Struct y failed");
+
+# Ensure second instance works (tests Shape re-use)
+let p2 = Point { x: 30, y: 40 };
+assert(p2.x == 30, "Struct2 x failed");
+assert(p2.y == 40, "Struct2 y failed");
+
+# 2. Traits (Interfaces)
+trait Greeter {
+    task greet();
+}
+
+# 3. Classes and Inheritance
+class Person with Greeter {
+    pub name;
+    init(name) {
+        self.name = name;
+    }
+    
+    task greet() {
+        return "Hello, " + self.name;
+    }
+}
+
+let alice = Person("Alice");
+assert(alice.name == "Alice", "Class property failed");
+assert(alice.greet() == "Hello, Alice", "Class method failed");
+
+# Inheritance
+class Employee extends Person {
+    pub id;
+    init(id, name) {
+        self.id = id;
+        self.name = name;
+    }
+    
+    task getInfo() {
+        return "ID: " + self.id + ", Name: " + self.name;
+    }
+}
+
+let bob = Employee(101, "Bob");
+assert(bob.id == 101, "Inherited property failed");
+assert(bob.greet() == "Hello, Bob", "Inherited method failed");
+assert(bob.getInfo() == "ID: 101, Name: Bob", "Child method failed");
+
+# 4. Static (Shared) Members
+class Config {
+    shared version;
+    shared task getVersion() {
+        return "1.0.0";
+    }
+}
+
+Config.version = "1.1.0";
+assert(Config.version == "1.1.0", "Shared property failed");
+assert(Config.getVersion() == "1.0.0", "Shared task failed");
+
+emit("OOP tests passed!");

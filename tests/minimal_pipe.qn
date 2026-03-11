@@ -1,2 +1,0 @@
-let x = 5 |> task(v) => v * 2;
-emit(x);

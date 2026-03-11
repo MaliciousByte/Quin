@@ -1,0 +1,43 @@
+# Core Basics Test
+emit("Running core basics tests...");
+
+# Variables and Arithmetic
+let a = 10;
+let b = 20;
+assert(a + b == 30, "Addition failed");
+assert(b - a == 10, "Subtraction failed");
+assert(a * b == 200, "Multiplication failed");
+assert(b / a == 2, "Division failed");
+
+# Comparisons
+assert(a < b, "Less than failed");
+assert(b > a, "Greater than failed");
+assert(a != b, "Not equal failed");
+assert(a == 10, "Equal failed");
+
+# Logical Flow (if/else)
+let mut result = void;
+if a > 0 {
+    result = "positive";
+} else {
+    result = "negative";
+}
+assert(result == "positive", "If/else failed");
+
+# While Loops
+let mut i = 0;
+let mut sum = 0;
+while i < 5 {
+    sum = sum + i;
+    i = i + 1;
+}
+assert(sum == 10, "While loop failed");
+
+# Strings
+let s1 = "Hello";
+let s2 = "World";
+let combined = s1 + " " + s2;
+assert(combined == "Hello World", "String concatenation failed");
+assert(len(combined) == 11, "String length failed");
+
+emit("Core basics tests passed!");

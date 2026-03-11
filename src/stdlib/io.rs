@@ -19,9 +19,12 @@ pub fn register(vm: &mut VM) {
 
     let name = vm.intern("type_of");
     vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_type_of))));
+
+    let name = vm.intern("assert");
+    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_assert))));
 }
 
-fn native_emit(args: &[Value]) -> Result<Value, String> {
+fn native_emit(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if let Some(val) = args.first() {
         println!("{}", val);
     } else {
@@ -30,7 +33,7 @@ fn native_emit(args: &[Value]) -> Result<Value, String> {
     Ok(Value::null())
 }
 
-fn native_input(args: &[Value]) -> Result<Value, String> {
+fn native_input(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     use std::io::{self, Write};
     if let Some(prompt) = args.first() {
         print!("{}", prompt);
@@ -39,22 +42,24 @@ fn native_input(args: &[Value]) -> Result<Value, String> {
     let mut line = String::new();
     io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
     let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-    Ok(Value::obj(Rc::new(Obj::String(Rc::from(trimmed)))))
+    let interned = vm.intern(trimmed);
+    Ok(Value::obj(Rc::new(Obj::String(interned))))
 }
 
-fn native_read_file(args: &[Value]) -> Result<Value, String> {
+fn native_read_file(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() { return Err("read_file expects 1 argument (path)".to_string()); }
     if args[0].is_obj() {
         if let Obj::String(path) = &*args[0].as_obj() {
             let content = std::fs::read_to_string(&**path)
                 .map_err(|e| format!("read_file error: {}", e))?;
-            return Ok(Value::obj(Rc::new(Obj::String(Rc::from(content.as_str())))));
+            let interned = vm.intern(&content);
+            return Ok(Value::obj(Rc::new(Obj::String(interned))));
         }
     }
     Err("read_file: argument must be a string path".to_string())
 }
 
-fn native_write_file(args: &[Value]) -> Result<Value, String> {
+fn native_write_file(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 2 { return Err("write_file expects 2 arguments (path, content)".to_string()); }
     let path = if args[0].is_obj() {
         if let Obj::String(s) = &*args[0].as_obj() { s.to_string() }
@@ -72,7 +77,7 @@ fn native_write_file(args: &[Value]) -> Result<Value, String> {
     Ok(Value::null())
 }
 
-fn native_type_of(args: &[Value]) -> Result<Value, String> {
+fn native_type_of(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = args.first().ok_or("type_of expects 1 argument")?;
     let type_name = if v.is_int() { "int" }
     else if v.is_float() { "float" }
@@ -80,5 +85,21 @@ fn native_type_of(args: &[Value]) -> Result<Value, String> {
     else if v.is_null() { "void" }
     else if v.is_obj() { v.as_obj().type_name() }
     else { "unknown" };
-    Ok(Value::obj(Rc::new(Obj::String(Rc::from(type_name)))))
+    let interned = vm.intern(type_name);
+    Ok(Value::obj(Rc::new(Obj::String(interned))))
+}
+
+fn native_assert(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() { return Err("assert expects at least 1 argument".to_string()); }
+    let condition = &args[0];
+    let message = if args.len() > 1 {
+        format!("{}", args[1])
+    } else {
+        "Assertion failed".to_string()
+    };
+
+    if vm.is_falsey(condition) {
+        return Err(message);
+    }
+    Ok(Value::null())
 }

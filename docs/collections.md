@@ -34,9 +34,10 @@ emit(point[2]); # "label"
 ```
 
 ## Destructuring
-You can easily extract values from collections:
+> [!IMPORTANT]
+> Destructuring is currently supported in the parser, but compiler implementation is pending.
 
 ```quin
-let (x: int, y: int) = (100, 200);
-let [first: int, second: int, ...rest: int[]] = [1, 2, 3, 4, 5];
+let (x, y) = (100, 200);
+let [first, second, ...rest] = [1, 2, 3, 4, 5];
 ```

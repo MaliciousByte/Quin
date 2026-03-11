@@ -212,7 +212,7 @@ pub struct BoundMethodValue {
     pub method: Rc<Function>,
 }
 
-pub type NativeFn = fn(&[Value]) -> Result<Value, String>;
+pub type NativeFn = fn(&mut crate::vm::VM, &[Value]) -> Result<Value, String>;
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
@@ -222,7 +222,7 @@ impl PartialEq for Value {
         }
         if self.is_obj() && other.is_obj() {
              match (&*self.as_obj(), &*other.as_obj()) {
-                 (Obj::String(a), Obj::String(b)) => return Rc::ptr_eq(a, b),
+                 (Obj::String(a), Obj::String(b)) => return *a == *b,
                  (Obj::Tuple(a), Obj::Tuple(b)) => return a == b,
                  _ => {}
              }

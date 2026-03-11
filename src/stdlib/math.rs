@@ -42,41 +42,41 @@ fn to_f64(v: &Value) -> Result<f64, String> {
     else { Err("Expected a number".to_string()) }
 }
 
-fn native_sqrt(args: &[Value]) -> Result<Value, String> {
+fn native_sqrt(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = to_f64(args.first().ok_or("sqrt expects 1 argument")?)?;
     Ok(Value::float(v.sqrt()))
 }
 
-fn native_pow(args: &[Value]) -> Result<Value, String> {
+fn native_pow(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 2 { return Err("pow expects 2 arguments".to_string()); }
     let base = to_f64(&args[0])?;
     let exp = to_f64(&args[1])?;
     Ok(Value::float(base.powf(exp)))
 }
 
-fn native_abs(args: &[Value]) -> Result<Value, String> {
+fn native_abs(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = args.first().ok_or("abs expects 1 argument")?;
     if v.is_int() { Ok(Value::int(v.as_int().abs())) }
     else if v.is_float() { Ok(Value::float(v.as_float().abs())) }
     else { Err("abs expects a number".to_string()) }
 }
 
-fn native_floor(args: &[Value]) -> Result<Value, String> {
+fn native_floor(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = to_f64(args.first().ok_or("floor expects 1 argument")?)?;
     Ok(Value::int(v.floor() as i64))
 }
 
-fn native_ceil(args: &[Value]) -> Result<Value, String> {
+fn native_ceil(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = to_f64(args.first().ok_or("ceil expects 1 argument")?)?;
     Ok(Value::int(v.ceil() as i64))
 }
 
-fn native_round(args: &[Value]) -> Result<Value, String> {
+fn native_round(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = to_f64(args.first().ok_or("round expects 1 argument")?)?;
     Ok(Value::int(v.round() as i64))
 }
 
-fn native_min(args: &[Value]) -> Result<Value, String> {
+fn native_min(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 2 { return Err("min expects 2 arguments".to_string()); }
     let a = to_f64(&args[0])?;
     let b = to_f64(&args[1])?;
@@ -87,7 +87,7 @@ fn native_min(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-fn native_max(args: &[Value]) -> Result<Value, String> {
+fn native_max(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     if args.len() != 2 { return Err("max expects 2 arguments".to_string()); }
     let a = to_f64(&args[0])?;
     let b = to_f64(&args[1])?;

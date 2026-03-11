@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::chunk::OpCode;
-use crate::value::{Value, Function, ClassValue, InstanceValue};
+use crate::value::{Value, Function, InstanceValue};
 use crate::obj::Obj;
 use crate::jit::JitEngine;
 use crate::interner::StringInterner;
@@ -108,616 +108,642 @@ impl VM {
         }
     }
 
-    fn run(&mut self) -> Result<(), String> {
+    pub fn run(&mut self) -> Result<(), String> {
+        let starting_depth = self.frames.len();
         loop {
             let op = self.read_instruction()?;
+            self.execute_op(op)?;
+            if self.frames.len() < starting_depth {
+                return Ok(());
+            }
+        }
+    }
 
-            match op {
-                OpCode::Constant(idx) => {
-                    let constant = self.read_constant(idx)?;
-                    self.push(constant);
-                }
-                OpCode::Null => self.push(Value::null()),
-                OpCode::True => self.push(Value::bool(true)),
-                OpCode::False => self.push(Value::bool(false)),
-                OpCode::Pop => { self.pop()?; }
-                OpCode::Dup => {
-                    let val = self.peek(0)?.clone();
-                    self.push(val);
-                }
-                
-                OpCode::Closure(idx) => {
-                    let function_val = self.read_constant(idx)?;
-                    if function_val.is_obj() {
-                        if let Obj::Function(function) = &*function_val.as_obj() {
-                            let mut upvalues = Vec::new();
-                            for req in &function.upvalues {
-                                if req.is_local {
-                                    upvalues.push(self.capture_upvalue(self.current_frame()?.stack_offset + req.index));
-                                } else {
-                                    upvalues.push(self.current_frame()?.closure.upvalues[req.index].clone());
-                                }
+    fn execute_op(&mut self, op: OpCode) -> Result<(), String> {
+        match op {
+            OpCode::Constant(idx) => {
+                let constant = self.read_constant(idx)?;
+                self.push(constant);
+            }
+            OpCode::Null => self.push(Value::null()),
+            OpCode::True => self.push(Value::bool(true)),
+            OpCode::False => self.push(Value::bool(false)),
+            OpCode::Pop => { self.pop()?; }
+            OpCode::Dup => {
+                let val = self.peek(0)?.clone();
+                self.push(val);
+            }
+            
+            OpCode::Closure(idx) => {
+                let function_val = self.read_constant(idx)?;
+                if function_val.is_obj() {
+                    if let Obj::Function(function) = &*function_val.as_obj() {
+                        let mut upvalues = Vec::new();
+                        for req in &function.upvalues {
+                            if req.is_local {
+                                upvalues.push(self.capture_upvalue(self.current_frame()?.stack_offset + req.index));
+                            } else {
+                                upvalues.push(self.current_frame()?.closure.upvalues[req.index].clone());
                             }
-                            let closure = Rc::new(crate::value::Closure {
-                                function: function.clone(),
-                                upvalues,
-                            });
-                            self.push(Value::obj(Rc::new(Obj::Closure(closure))));
-                        } else {
-                            return Err("Expected function for closure.".to_string());
                         }
+                        let closure = Rc::new(crate::value::Closure {
+                            function: function.clone(),
+                            upvalues,
+                        });
+                        self.push(Value::obj(Rc::new(Obj::Closure(closure))));
                     } else {
-                        return Err("Expected function object for closure.".to_string());
+                        return Err("Expected function for closure.".to_string());
                     }
+                } else {
+                    return Err("Expected function object for closure.".to_string());
                 }
+            }
 
-                OpCode::GetUpvalue(slot) => {
-                    let upvalue = self.current_frame()?.closure.upvalues[slot].clone();
-                    let val = if let Some(closed) = &upvalue.borrow().closed {
-                        closed.clone()
-                    } else {
-                        self.stack[upvalue.borrow().index].clone()
-                    };
-                    self.push(val);
+            OpCode::GetUpvalue(idx) => {
+                let upvalue = self.current_frame()?.closure.upvalues[idx].clone();
+                let val = match &upvalue.borrow().closed {
+                    Some(val) => val.clone(),
+                    None => self.stack[upvalue.borrow().index].clone(),
+                };
+                self.push(val);
+            }
+            OpCode::SetUpvalue(idx) => {
+                let val = self.peek(0)?.clone();
+                let upvalue = self.current_frame()?.closure.upvalues[idx].clone();
+                if upvalue.borrow().closed.is_some() {
+                    upvalue.borrow_mut().closed = Some(val);
+                } else {
+                    let index = upvalue.borrow().index;
+                    self.stack[index] = val;
                 }
-
-                OpCode::SetUpvalue(slot) => {
-                    let upvalue = self.current_frame()?.closure.upvalues[slot].clone();
+            }
+            OpCode::CloseUpvalue => {
+                self.close_upvalues(self.stack.len() - 1);
+                self.pop()?;
+            }
+            OpCode::GetLocal(idx) => {
+                let offset = self.current_frame()?.stack_offset;
+                self.push(self.stack[offset + idx].clone());
+            }
+            OpCode::SetLocal(idx) => {
+                let offset = self.current_frame()?.stack_offset;
+                let val = self.peek(0)?.clone();
+                self.stack[offset + idx] = val;
+            }
+            OpCode::GetGlobal(idx) => {
+                let name = self.read_string(idx)?;
+                if let Some(val) = self.globals.get(&name) {
+                    self.push(val.clone());
+                } else {
+                    return Err(format!("Undefined variable '{}'.", name));
+                }
+            }
+            OpCode::SetGlobal(idx) => {
+                let name = self.read_string(idx)?;
+                if self.globals.contains_key(&name) {
                     let val = self.peek(0)?.clone();
-                    if upvalue.borrow().closed.is_some() {
-                        upvalue.borrow_mut().closed = Some(val);
-                    } else {
-                        let idx = upvalue.borrow().index;
-                        self.stack[idx] = val;
-                    }
-                }
-
-                OpCode::CloseUpvalue => {
-                    self.close_upvalues(self.stack.len() - 1);
-                    self.pop()?;
-                }
-                
-                OpCode::GetLocal(slot) => {
-                    let offset = self.current_frame()?.stack_offset;
-                    let val = self.stack[offset + slot].clone();
-                    self.push(val);
-                }
-                OpCode::SetLocal(slot) => {
-                    let offset = self.current_frame()?.stack_offset;
-                    let val = self.peek(0)?.clone();
-                    self.stack[offset + slot] = val;
-                }
-                OpCode::GetGlobal(idx) => {
-                    let name = self.read_string(idx)?;
-                    if let Some(val) = self.globals.get(&name) {
-                        self.push(val.clone());
-                    } else {
-                        return Err(format!("Undefined variable '{}'.", name));
-                    }
-                }
-                OpCode::SetGlobal(idx) => {
-                    let name = self.read_string(idx)?;
-                    if self.globals.contains_key(&name) {
-                        let val = self.peek(0)?.clone();
-                        self.globals.insert(name, val);
-                    } else {
-                        return Err(format!("Undefined variable '{}'.", name));
-                    }
-                }
-                OpCode::DefineGlobal(idx) => {
-                    let name = self.read_string(idx)?;
-                    let val = self.pop()?;
                     self.globals.insert(name, val);
+                } else {
+                    return Err(format!("Undefined variable '{}'.", name));
                 }
+            }
+            OpCode::DefineGlobal(idx) => {
+                let name = self.read_string(idx)?;
+                let val = self.pop()?;
+                self.globals.insert(name, val);
+            }
 
-                OpCode::Equal => {
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(Value::bool(a == b));
+            OpCode::Equal => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                self.push(Value::bool(a == b));
+            }
+            OpCode::Greater => self.binary_op_bool(|a, b| a > b)?,
+            OpCode::Less => self.binary_op_bool(|a, b| a < b)?,
+            OpCode::Add => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                if a.is_int() && b.is_int() {
+                    self.push(Value::int(a.as_int() + b.as_int()));
+                } else if (a.is_float() || a.is_int()) && (b.is_float() || b.is_int()) {
+                    let va = if a.is_int() { a.as_int() as f64 } else { a.as_float() };
+                    let vb = if b.is_int() { b.as_int() as f64 } else { b.as_float() };
+                    self.push(Value::float(va + vb));
+                } else if a.is_obj() || b.is_obj() {
+                    let res = format!("{}{}", a, b);
+                    let interned = self.intern(&res);
+                    self.push(Value::obj(Rc::new(Obj::String(interned))));
+                } else {
+                    return Err("Operands must be two numbers or include a string.".to_string())
                 }
-                OpCode::Greater => self.binary_op_bool(|a, b| a > b)?,
-                OpCode::Less => self.binary_op_bool(|a, b| a < b)?,
-                OpCode::Add => {
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    if a.is_int() && b.is_int() {
-                        self.push(Value::int(a.as_int() + b.as_int()));
-                    } else if (a.is_float() || a.is_int()) && (b.is_float() || b.is_int()) {
-                        let va = if a.is_int() { a.as_int() as f64 } else { a.as_float() };
-                        let vb = if b.is_int() { b.as_int() as f64 } else { b.as_float() };
-                        self.push(Value::float(va + vb));
-                    } else if a.is_obj() || b.is_obj() {
-                        let res = format!("{}{}", a, b);
-                        let interned = self.intern(&res);
-                        self.push(Value::obj(Rc::new(Obj::String(interned))));
-                    } else {
-                        return Err("Operands must be two numbers or include a string.".to_string())
-                    }
+            }
+            OpCode::Subtract => self.binary_op_math(|a, b| a - b, |a, b| a - b)?,
+            OpCode::Multiply => self.binary_op_math(|a, b| a * b, |a, b| a * b)?,
+            OpCode::Divide => self.binary_op_math(|a, b| a / b, |a, b| a / b)?,
+            
+            OpCode::Not => {
+                let val = self.pop()?;
+                self.push(Value::bool(self.is_falsey(&val)));
+            }
+            OpCode::Negate => {
+                let val = self.pop()?;
+                if val.is_int() {
+                    self.push(Value::int(-val.as_int()));
+                } else if val.is_float() {
+                    self.push(Value::float(-val.as_float()));
+                } else {
+                    return Err("Operand must be a number.".to_string());
                 }
-                OpCode::Subtract => self.binary_op_math(|a, b| a - b, |a, b| a - b)?,
-                OpCode::Multiply => self.binary_op_math(|a, b| a * b, |a, b| a * b)?,
-                OpCode::Divide => self.binary_op_math(|a, b| a / b, |a, b| a / b)?,
-                
-                OpCode::Not => {
-                    let val = self.pop()?;
-                    self.push(Value::bool(self.is_falsey(&val)));
-                }
-                OpCode::Negate => {
-                    let val = self.pop()?;
-                    if val.is_int() {
-                        self.push(Value::int(-val.as_int()));
-                    } else if val.is_float() {
-                        self.push(Value::float(-val.as_float()));
-                    } else {
-                        return Err("Operand must be a number.".to_string());
-                    }
-                }
+            }
 
-                OpCode::JumpIfFalse(offset) => {
-                    let val = self.peek(0)?;
-                    if self.is_falsey(val) {
-                        self.current_frame_mut()?.ip += offset;
-                    }
-                }
-                OpCode::Jump(offset) => {
+            OpCode::JumpIfFalse(offset) => {
+                let val = self.peek(0)?;
+                if self.is_falsey(val) {
                     self.current_frame_mut()?.ip += offset;
                 }
-                OpCode::Loop(offset) => {
-                    let is_hot = {
+            }
+            OpCode::Jump(offset) => {
+                self.current_frame_mut()?.ip += offset;
+            }
+            OpCode::Loop(offset) => {
+                let is_hot = {
+                    let frame = self.current_frame_mut()?;
+                    frame.ip -= offset;
+                    frame.closure.function.increment_hotness()
+                };
+
+                if is_hot {
+                    let function = {
                         let frame = self.current_frame_mut()?;
-                        frame.ip -= offset;
-                        frame.closure.function.increment_hotness()
+                        println!("Function {} is now HOT (loop)!", frame.closure.function.name);
+                        frame.closure.function.clone()
                     };
+                    let native_ptr = self.jit_engine.compile(&function);
+                    function.native_ptr.store(native_ptr as *mut u8, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            OpCode::JumpIfNull(offset) => {
+                let val = self.peek(0)?;
+                if val.is_null() {
+                    self.current_frame_mut()?.ip += offset;
+                }
+            }
 
-                    if is_hot {
-                        let function = {
-                            let frame = self.current_frame_mut()?;
-                            println!("Function {} is now HOT (loop)!", frame.closure.function.name);
-                            frame.closure.function.clone()
-                        };
-                        let native_ptr = self.jit_engine.compile(&function);
-                        function.native_ptr.store(native_ptr as *mut u8, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-                OpCode::JumpIfNull(offset) => {
-                    let val = self.peek(0)?;
-                    if val.is_null() {
-                        self.current_frame_mut()?.ip += offset;
-                    }
-                }
+            OpCode::Call(arg_count) => {
+                self.call_value(arg_count)?;
+            }
+            OpCode::Return => {
+                let result = self.pop()?;
+                let frame = self.frames.pop().unwrap();
+                self.close_upvalues(frame.stack_offset);
+                self.stack.truncate(frame.stack_offset);
+                self.push(result);
+            }
 
-                OpCode::Call(arg_count) => {
-                    self.call_value(arg_count)?;
+            OpCode::BuildArray(count) => {
+                let mut elements = Vec::new();
+                for _ in 0..count {
+                    elements.push(self.pop()?);
                 }
-                OpCode::Return => {
-                    let result = self.pop()?;
-                    let frame = self.frames.pop().unwrap();
-                    self.close_upvalues(frame.stack_offset);
-                    self.stack.truncate(frame.stack_offset);
-                    self.push(result);
-                    if self.frames.is_empty() {
-                        return Ok(());
-                    }
-                }
+                elements.reverse();
+                self.push(Value::obj(Rc::new(Obj::Array(RefCell::new(elements)))));
+            }
 
-                OpCode::BuildArray(count) => {
-                    let mut elements = Vec::new();
-                    for _ in 0..count {
-                        elements.push(self.pop()?);
-                    }
-                    elements.reverse();
-                    self.push(Value::obj(Rc::new(Obj::Array(RefCell::new(elements)))));
-                }
-
-                OpCode::BuildDict(count) => {
-                    let mut map = HashMap::new();
-                    for _ in 0..count {
-                        let value = self.pop()?;
-                        let key = self.pop()?;
-                        map.insert(key, value);
-                    }
-                    self.push(Value::obj(Rc::new(Obj::Dict(RefCell::new(map)))));
-                }
-
-                OpCode::BuildTuple(count) => {
-                    let mut elements = Vec::new();
-                    for _ in 0..count {
-                        elements.push(self.pop()?);
-                    }
-                    elements.reverse();
-                    self.push(Value::obj(Rc::new(Obj::Tuple(elements))));
-                }
-
-                OpCode::BuildSet(count) => {
-                    let mut set = std::collections::HashSet::new();
-                    for _ in 0..count {
-                        set.insert(self.pop()?);
-                    }
-                    self.push(Value::obj(Rc::new(Obj::Set(RefCell::new(set)))));
-                }
-                
-                OpCode::GetIndex => {
-                    let index = self.pop()?;
-                    let target = self.pop()?;
-                    if target.is_obj() {
-                        match &*target.as_obj() {
-                            Obj::Array(arr) => {
-                                if index.is_int() {
-                                    let elements = arr.borrow();
-                                    let i = index.as_int();
-                                    if i >= 0 && (i as usize) < elements.len() {
-                                        self.push(elements[i as usize].clone());
-                                    } else {
-                                        return Err(format!("Array index out of bounds: {}", i));
-                                    }
-                                } else {
-                                    return Err("Array index must be an integer.".to_string());
-                                }
-                            }
-                            Obj::Dict(map) => {
-                                if let Some(val) = map.borrow().get(&index) {
-                                    self.push(val.clone());
-                                } else {
-                                    self.push(Value::null());
-                                }
-                            }
-                            Obj::Tuple(elements) => {
-                                if index.is_int() {
-                                    let i = index.as_int();
-                                    if i >= 0 && (i as usize) < elements.len() {
-                                        self.push(elements[i as usize].clone());
-                                    } else {
-                                        return Err(format!("Tuple index out of bounds: {}", i));
-                                    }
-                                } else {
-                                    return Err("Tuple index must be an integer.".to_string());
-                                }
-                            }
-                            _ => return Err("Only arrays, dicts, and tuples can be indexed.".to_string()),
-                        }
-                    } else {
-                        return Err("Target is not indexable.".to_string());
-                    }
-                }
-
-                OpCode::SetIndex => {
+            OpCode::BuildDict(count) => {
+                let mut map = HashMap::new();
+                for _ in 0..count {
                     let value = self.pop()?;
-                    let index = self.pop()?;
-                    let target = self.pop()?;
-                    if target.is_obj() {
-                        match &*target.as_obj() {
-                            Obj::Array(arr) => {
-                                if index.is_int() {
-                                    let mut elements = arr.borrow_mut();
-                                    let i = index.as_int();
-                                    if i >= 0 && (i as usize) < elements.len() {
-                                        elements[i as usize] = value.clone();
-                                        self.push(value);
-                                    } else {
-                                        return Err(format!("Array index out of bounds: {}", i));
-                                    }
+                    let key = self.pop()?;
+                    map.insert(key, value);
+                }
+                self.push(Value::obj(Rc::new(Obj::Dict(RefCell::new(map)))));
+            }
+
+            OpCode::BuildTuple(count) => {
+                let mut elements = Vec::new();
+                for _ in 0..count {
+                    elements.push(self.pop()?);
+                }
+                elements.reverse();
+                self.push(Value::obj(Rc::new(Obj::Tuple(elements))));
+            }
+
+            OpCode::BuildSet(count) => {
+                let mut set = std::collections::HashSet::new();
+                for _ in 0..count {
+                    set.insert(self.pop()?);
+                }
+                self.push(Value::obj(Rc::new(Obj::Set(RefCell::new(set)))));
+            }
+            
+            OpCode::GetIndex => {
+                let index = self.pop()?;
+                let target = self.pop()?;
+                if target.is_obj() {
+                    match &*target.as_obj() {
+                        Obj::Array(arr) => {
+                            if index.is_int() {
+                                let elements = arr.borrow();
+                                let i = index.as_int();
+                                if i >= 0 && (i as usize) < elements.len() {
+                                    self.push(elements[i as usize].clone());
                                 } else {
-                                    return Err("Array index must be an integer.".to_string());
+                                    return Err(format!("Array index out of bounds: {}", i));
                                 }
+                            } else {
+                                return Err("Array index must be an integer.".to_string());
                             }
-                            Obj::Dict(map) => {
-                                map.borrow_mut().insert(index, value.clone());
-                                self.push(value);
+                        }
+                        Obj::Dict(map) => {
+                            if let Some(val) = map.borrow().get(&index) {
+                                self.push(val.clone());
+                            } else {
+                                self.push(Value::null());
                             }
-                            _ => return Err("Only arrays and dicts can be indexed for assignment.".to_string()),
+                        }
+                        Obj::Tuple(elements) => {
+                            if index.is_int() {
+                                let i = index.as_int();
+                                if i >= 0 && (i as usize) < elements.len() {
+                                    self.push(elements[i as usize].clone());
+                                } else {
+                                    return Err(format!("Tuple index out of bounds: {}", i));
+                                }
+                            } else {
+                                return Err("Tuple index must be an integer.".to_string());
+                            }
+                        }
+                        _ => return Err("Only arrays, dicts, and tuples can be indexed.".to_string()),
+                    }
+                } else {
+                    return Err("Target is not indexable.".to_string());
+                }
+            }
+
+            OpCode::SetIndex => {
+                let value = self.pop()?;
+                let index = self.pop()?;
+                let target = self.pop()?;
+                if target.is_obj() {
+                    match &*target.as_obj() {
+                        Obj::Array(arr) => {
+                            if index.is_int() {
+                                let mut elements = arr.borrow_mut();
+                                let i = index.as_int();
+                                if i >= 0 && (i as usize) < elements.len() {
+                                    elements[i as usize] = value.clone();
+                                    self.push(value);
+                                } else {
+                                    return Err(format!("Array index out of bounds: {}", i));
+                                }
+                            } else {
+                                return Err("Array index must be an integer.".to_string());
+                            }
+                        }
+                        Obj::Dict(map) => {
+                            map.borrow_mut().insert(index, value.clone());
+                            self.push(value);
+                        }
+                        _ => return Err("Only arrays and dicts can be indexed for assignment.".to_string()),
+                    }
+                } else {
+                    return Err("Target is not indexable for assignment.".to_string());
+                }
+            }
+            
+            OpCode::BuildInstance(name_idx, fields_count) => {
+                let name = self.read_string(name_idx)?;
+                let mut pairs = Vec::with_capacity(fields_count as usize * 2);
+                for _ in 0..fields_count {
+                    pairs.push(self.pop()?); // value
+                    pairs.push(self.pop()?); // name
+                }
+                pairs.reverse();
+
+                let mut field_values = Vec::with_capacity(fields_count as usize);
+                let mut current_shape = self.root_shape.clone();
+
+                for i in (0..pairs.len()).step_by(2) {
+                    let field_name_val = &pairs[i];
+                    let field_val = &pairs[i+1];
+                    
+                    let field_name = if field_name_val.is_obj() {
+                        if let Obj::String(s) = &*field_name_val.as_obj() {
+                            s.clone()
+                        } else {
+                            return Err("Field name must be a string.".to_string());
                         }
                     } else {
-                        return Err("Target is not indexable for assignment.".to_string());
-                    }
-                }
-                
-                OpCode::BuildInstance(name_idx, fields_count) => {
-                    let name = self.read_string(name_idx)?;
-                    let mut field_values = Vec::new();
-                    for _ in 0..fields_count {
-                        field_values.push(self.pop()?);
-                    }
-                    field_values.reverse();
- 
-                    let current_shape = self.root_shape.clone();
- 
-                    // [WARNING] Reconstructing shape from scratch here is slow, 
-                    // but matches previous HashMap behavior for now.
-                    // For now, let's just make it work with the new layout.
- 
-                    let inst = crate::value::Instance {
-                        name,
-                        shape: current_shape,
-                        fields: field_values,
+                        return Err("Field name must be a string.".to_string());
                     };
-                    self.push(Value::obj(Rc::new(Obj::Instance(Rc::new(RefCell::new(inst))))));
+                    
+                    // Transition shape
+                    let existing = current_shape.transitions.borrow().get(&field_name).cloned();
+                    let next_shape = if let Some(next) = existing {
+                        next
+                    } else {
+                        let next = current_shape.transition(field_name.clone(), self.next_shape_id);
+                        self.next_shape_id += 1;
+                        current_shape.transitions.borrow_mut().insert(field_name, next.clone());
+                        next
+                    };
+                    current_shape = next_shape;
+                    field_values.push(field_val.clone());
                 }
 
-                OpCode::GetProperty(name_idx) => {
-                    let name = self.read_string(name_idx)?;
-                    let obj = self.peek(0)?.clone();
-                    
-                    let ip = self.frames.last().unwrap().ip - 1;
-                    let mut cached_offset = None;
-                    
-                    if obj.is_obj() {
-                        match &*obj.as_obj() {
-                            Obj::Instance(inst) => {
-                                let inst_ptr = inst.borrow();
-                                // IC check
-                                if let Some(ic) = self.frames.last().unwrap().closure.function.chunk.property_caches.borrow()[ip] {
-                                    if ic.last_shape_id == inst_ptr.shape.id {
-                                        cached_offset = Some(ic.offset);
-                                    }
-                                }
-                                
-                                let offset = if let Some(off) = cached_offset {
-                                    off
-                                } else if let Some(&off) = inst_ptr.shape.property_offsets.get(&name) {
-                                    // Update IC
-                                    let ic = crate::chunk::ICEntry { last_shape_id: inst_ptr.shape.id, offset: off };
-                                    self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
-                                    off
-                                } else {
-                                    return Err(format!("Property '{}' not found on instance.", name));
-                                };
-                                
-                                self.pop()?; // object
-                                self.push(inst_ptr.fields[offset].clone());
-                            }
-                            Obj::Object(obj_val) => {
-                                let obj_ptr = obj_val.borrow();
-                                // IC check
-                                if let Some(ic) = self.frames.last().unwrap().closure.function.chunk.property_caches.borrow()[ip] {
-                                    if ic.last_shape_id == obj_ptr.shape.id {
-                                        cached_offset = Some(ic.offset);
-                                    }
-                                }
-                                
-                                if let Some(offset) = cached_offset {
-                                    self.pop()?;
-                                    self.push(obj_ptr.fields.borrow()[offset].clone());
-                                } else if let Some(&offset) = obj_ptr.shape.property_offsets.get(&name) {
-                                    // Update IC
-                                    let ic = crate::chunk::ICEntry { last_shape_id: obj_ptr.shape.id, offset };
-                                    self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
-                                    self.pop()?;
-                                    self.push(obj_ptr.fields.borrow()[offset].clone());
-                                } else {
-                                    // Lookup in class hierarchy
-                                    let mut current_class = Some(obj_ptr.class.clone());
-                                    let mut found = false;
-                                    while let Some(cls) = current_class {
-                                        if let Some(method_val) = cls.methods.borrow().get(&name) {
-                                            if method_val.is_obj() {
-                                                match &*method_val.as_obj() {
-                                                    Obj::Function(method) => {
-                                                        self.pop()?;
-                                                        self.push(Value::obj(Rc::new(Obj::BoundMethod(Rc::new(crate::value::BoundMethodValue {
-                                                            receiver: Value::obj(Rc::new(Obj::Object(obj_val.clone()))),
-                                                            method: method.clone(),
-                                                        })))));
-                                                        found = true;
-                                                        break;
-                                                    }
-                                                    Obj::Closure(closure) => {
-                                                        self.pop()?;
-                                                        self.push(Value::obj(Rc::new(Obj::BoundMethod(Rc::new(crate::value::BoundMethodValue {
-                                                            receiver: Value::obj(Rc::new(Obj::Object(obj_val.clone()))),
-                                                            method: closure.function.clone(),
-                                                        })))));
-                                                        found = true;
-                                                        break;
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                        }
-                                        current_class = cls.superclass.clone();
-                                    }
-                                    if !found {
-                                        return Err(format!("Property '{}' not found on instance of {}.", name, obj_ptr.class.name));
-                                    }
+                let inst = crate::value::Instance {
+                    name,
+                    shape: current_shape,
+                    fields: field_values,
+                };
+                self.push(Value::obj(Rc::new(Obj::Instance(Rc::new(RefCell::new(inst))))));
+            }
+
+            OpCode::GetProperty(name_idx) => {
+                let name = self.read_string(name_idx)?;
+                let obj = self.peek(0)?.clone();
+                
+                let ip = self.frames.last().unwrap().ip - 1;
+                let mut cached_offset = None;
+                
+                if obj.is_obj() {
+                    match &*obj.as_obj() {
+                        Obj::Instance(inst) => {
+                            let inst_ptr = inst.borrow();
+                            // IC check
+                            if let Some(ic) = self.frames.last().unwrap().closure.function.chunk.property_caches.borrow()[ip] {
+                                if ic.last_shape_id == inst_ptr.shape.id {
+                                    cached_offset = Some(ic.offset);
                                 }
                             }
-                            Obj::Dict(map) => {
-                                let key = Value::obj(Rc::new(Obj::String(name)));
-                                self.pop()?; // pop obj
-                                if let Some(val) = map.borrow().get(&key) {
-                                    self.push(val.clone());
-                                } else {
-                                    self.push(Value::null());
+                            
+                            let offset = if let Some(off) = cached_offset {
+                                off
+                            } else if let Some(&off) = inst_ptr.shape.property_offsets.get(&name) {
+                                // Update IC
+                                let ic = crate::chunk::ICEntry { last_shape_id: inst_ptr.shape.id, offset: off };
+                                self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
+                                off
+                            } else {
+                                return Err(format!("Property '{}' not found on instance.", name));
+                            };
+                            
+                            self.pop()?; // object
+                            self.push(inst_ptr.fields[offset].clone());
+                        }
+                        Obj::Object(obj_val) => {
+                            let obj_ptr = obj_val.borrow();
+                            // IC check
+                            if let Some(ic) = self.frames.last().unwrap().closure.function.chunk.property_caches.borrow()[ip] {
+                                if ic.last_shape_id == obj_ptr.shape.id {
+                                    cached_offset = Some(ic.offset);
                                 }
                             }
-                            Obj::Class(cls_val) => {
-                                // Static method access with hierarchy
-                                let mut current_class = Some(cls_val.clone());
+                            
+                            if let Some(offset) = cached_offset {
+                                self.pop()?;
+                                self.push(obj_ptr.fields.borrow()[offset].clone());
+                            } else if let Some(&offset) = obj_ptr.shape.property_offsets.get(&name) {
+                                // Update IC
+                                let ic = crate::chunk::ICEntry { last_shape_id: obj_ptr.shape.id, offset };
+                                self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
+                                self.pop()?;
+                                self.push(obj_ptr.fields.borrow()[offset].clone());
+                            } else {
+                                // Lookup in class hierarchy
+                                let mut current_class = Some(obj_ptr.class.clone());
                                 let mut found = false;
                                 while let Some(cls) = current_class {
-                                    if let Some(method) = cls.methods.borrow().get(&name) {
-                                        self.pop()?; // pop obj
-                                        self.push(method.clone());
-                                        found = true;
-                                        break;
+                                    if let Some(method_val) = cls.methods.borrow().get(&name) {
+                                        if method_val.is_obj() {
+                                            match &*method_val.as_obj() {
+                                                Obj::Function(method) => {
+                                                    self.pop()?;
+                                                    self.push(Value::obj(Rc::new(Obj::BoundMethod(Rc::new(crate::value::BoundMethodValue {
+                                                        receiver: Value::obj(Rc::new(Obj::Object(obj_val.clone()))),
+                                                        method: method.clone(),
+                                                    })))));
+                                                    found = true;
+                                                    break;
+                                                }
+                                                Obj::Closure(closure) => {
+                                                    self.pop()?;
+                                                    self.push(Value::obj(Rc::new(Obj::BoundMethod(Rc::new(crate::value::BoundMethodValue {
+                                                        receiver: Value::obj(Rc::new(Obj::Object(obj_val.clone()))),
+                                                        method: closure.function.clone(),
+                                                    })))));
+                                                    found = true;
+                                                    break;
+                                                }
+                                                _ => {}
+                                            }
+                                        }
                                     }
                                     current_class = cls.superclass.clone();
                                 }
                                 if !found {
+                                    return Err(format!("Property '{}' not found on instance of {}.", name, obj_ptr.class.name));
+                                }
+                            }
+                        }
+                        Obj::Dict(map) => {
+                            let key = Value::obj(Rc::new(Obj::String(name)));
+                            self.pop()?; // pop obj
+                            if let Some(val) = map.borrow().get(&key) {
+                                self.push(val.clone());
+                            } else {
+                                self.push(Value::null());
+                            }
+                        }
+                        Obj::Class(cls_val) => {
+                            // Static method access with hierarchy
+                            let mut current_class = Some(cls_val.clone());
+                            let mut found = false;
+                            while let Some(cls) = current_class {
+                                if let Some(method) = cls.methods.borrow().get(&name) {
                                     self.pop()?; // pop obj
-                                    self.push(Value::null());
+                                    self.push(method.clone());
+                                    found = true;
+                                    break;
                                 }
+                                current_class = cls.superclass.clone();
                             }
-                            _ => return Err("Only instances, objects, classes, and dicts have properties.".to_string()),
-                        }
-                    } else {
-                        return Err("Target is not an object.".to_string());
-                    }
-                }
-                
-                OpCode::SetProperty(name_idx) => {
-                    let name = self.read_string(name_idx)?;
-                    let value = self.pop()?;
-                    let obj = self.pop()?;
-                    
-                    let ip = self.frames.last().unwrap().ip - 1;
-                    
-                    if obj.is_obj() {
-                        match &*obj.as_obj() {
-                            Obj::Instance(inst) => {
-                                let mut inst_ptr = inst.borrow_mut();
-                                
-                                let mut cached_offset = None;
-                                if let Some(ic) = self.frames.last().unwrap().closure.function.chunk.property_caches.borrow()[ip] {
-                                    if ic.last_shape_id == inst_ptr.shape.id {
-                                        cached_offset = Some(ic.offset);
-                                    }
-                                }
-                                
-                                if let Some(offset) = cached_offset {
-                                    inst_ptr.fields[offset] = value.clone();
-                                } else if let Some(&offset) = inst_ptr.shape.property_offsets.get(&name) {
-                                    // Update IC
-                                    let ic = crate::chunk::ICEntry { last_shape_id: inst_ptr.shape.id, offset };
-                                    self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
-                                    inst_ptr.fields[offset] = value.clone();
-                                } else {
-                                    // Shape transition
-                                    let existing_transition = inst_ptr.shape.transitions.borrow().get(&name).cloned();
-                                    let next_shape = if let Some(s) = existing_transition {
-                                        s
-                                    } else {
-                                        let ns = inst_ptr.shape.transition(name.clone(), self.next_shape_id);
-                                        self.next_shape_id += 1;
-                                        inst_ptr.shape.transitions.borrow_mut().insert(name.clone(), ns.clone());
-                                        ns
-                                    };
-                                    
-                                    let offset = next_shape.property_offsets.get(&name).cloned().unwrap();
-                                    let ic = crate::chunk::ICEntry { last_shape_id: next_shape.id, offset };
-                                    self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
-                                    
-                                    inst_ptr.shape = next_shape;
-                                    inst_ptr.fields.push(value.clone());
-                                }
-                                self.push(value);
+                            if !found {
+                                self.pop()?; // pop obj
+                                self.push(Value::null());
                             }
-                            Obj::Object(obj_val) => {
-                                let mut obj_ptr = obj_val.borrow_mut();
-                                
-                                let mut cached_offset = None;
-                                if let Some(ic) = self.frames.last().unwrap().closure.function.chunk.property_caches.borrow()[ip] {
-                                    if ic.last_shape_id == obj_ptr.shape.id {
-                                        cached_offset = Some(ic.offset);
-                                    }
-                                }
-                                
-                                if let Some(offset) = cached_offset {
-                                    obj_ptr.fields.borrow_mut()[offset] = value.clone();
-                                } else if let Some(&offset) = obj_ptr.shape.property_offsets.get(&name) {
-                                    // Update IC
-                                    let ic = crate::chunk::ICEntry { last_shape_id: obj_ptr.shape.id, offset };
-                                    self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
-                                    obj_ptr.fields.borrow_mut()[offset] = value.clone();
-                                } else {
-                                    // Shape transition
-                                    let existing_transition = obj_ptr.shape.transitions.borrow().get(&name).cloned();
-                                    let next_shape = if let Some(s) = existing_transition {
-                                        s
-                                    } else {
-                                        let ns = obj_ptr.shape.transition(name.clone(), self.next_shape_id);
-                                        self.next_shape_id += 1;
-                                        obj_ptr.shape.transitions.borrow_mut().insert(name.clone(), ns.clone());
-                                        ns
-                                    };
-                                    
-                                    let offset = next_shape.property_offsets.get(&name).cloned().unwrap();
-                                    let ic = crate::chunk::ICEntry { last_shape_id: next_shape.id, offset };
-                                    self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
-                                    
-                                    obj_ptr.shape = next_shape;
-                                    obj_ptr.fields.borrow_mut().push(value.clone());
-                                }
-                                self.push(value);
-                            }
-                            Obj::Dict(map) => {
-                                let key = Value::obj(Rc::new(Obj::String(name)));
-                                map.borrow_mut().insert(key, value.clone());
-                                self.push(value);
-                            }
-                            _ => return Err("Only instances, objects, and dicts have properties.".to_string()),
                         }
-                    } else {
-                        return Err("Target is not an object.".to_string());
+                        _ => return Err("Only instances, objects, classes, and dicts have properties.".to_string()),
                     }
+                } else {
+                    return Err("Target is not an object.".to_string());
                 }
-
-                OpCode::Throw => {
-                    let error = self.pop()?;
-                    self.handle_exception(error)?;
-                }
-
-                OpCode::Await => {
-                    // Stub: if it's a promise, we'd yield. For now, just return value if it's immediate.
-                    let val = self.pop()?;
-                    self.push(val);
-                }
-
-                OpCode::Cast(name_idx) => {
-                    let _target_type = self.read_string(name_idx)?;
-                    // Dynamic cast: for now just no-op as everything is Value
-                    // In a strictly typed VM, we'd check and convert.
-                }
-
-                OpCode::SetupHandler(offset) => {
-                    let frame_idx = self.frames.len() - 1;
-                    let stack_idx = self.stack.len();
-                    let catch_ip = self.current_frame()?.ip + offset;
-                    self.handlers.push(ExceptionHandler {
-                        frame_idx,
-                        stack_idx,
-                        catch_ip,
-                    });
-                }
-
-                OpCode::PopHandler => {
-                    self.handlers.pop();
-                }
-
-                OpCode::Finally => {
-                    // Logic to pop a handler if we entered it normally?
-                    // Tricky without a full Try/Finally opcode pairing.
-                }
-
-                OpCode::BuildClass(name_idx) => {
-                    let name = self.read_string(name_idx)?;
-                    let super_val = self.pop()?;
-                    let mut superclass = None;
-                    if super_val.is_obj() {
-                        if let Obj::Class(cls) = &*super_val.as_obj() {
-                            superclass = Some(cls.clone());
-                        }
-                    }
-                    let cls = Rc::new(ClassValue { name, superclass, methods: RefCell::new(HashMap::new()) });
-                    self.push(Value::obj(Rc::new(Obj::Class(cls))));
-                }
-
-                OpCode::Method(name_idx) => {
-                    let name = self.read_string(name_idx)?;
-                    let method = self.pop()?;
-                    let class_val = self.peek(0)?;
-                    if class_val.is_obj() {
-                        if let Obj::Class(cls) = &*class_val.as_obj() {
-                            cls.methods.borrow_mut().insert(name, method);
-                        } else {
-                            return Err("Method opcode applied to non-class object.".to_string());
-                        }
-                    } else {
-                        return Err("Method opcode applied to non-class.".to_string());
-                    }
-                }
-
             }
+            
+            OpCode::SetProperty(name_idx) => {
+                let name = self.read_string(name_idx)?;
+                let value = self.pop()?;
+                let obj = self.pop()?;
+                
+                let ip = self.frames.last().unwrap().ip - 1;
+                
+                if obj.is_obj() {
+                    match &*obj.as_obj() {
+                        Obj::Instance(inst) => {
+                            let mut inst_ptr = inst.borrow_mut();
+                            
+                            let mut cached_offset = None;
+                            if let Some(ic) = self.frames.last().unwrap().closure.function.chunk.property_caches.borrow()[ip] {
+                                if ic.last_shape_id == inst_ptr.shape.id {
+                                    cached_offset = Some(ic.offset);
+                                }
+                            }
+                            
+                            if let Some(offset) = cached_offset {
+                                inst_ptr.fields[offset] = value.clone();
+                            } else if let Some(&offset) = inst_ptr.shape.property_offsets.get(&name) {
+                                // Update IC
+                                let ic = crate::chunk::ICEntry { last_shape_id: inst_ptr.shape.id, offset };
+                                self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
+                                inst_ptr.fields[offset] = value.clone();
+                            } else {
+                                // Shape transition
+                                let existing_transition = inst_ptr.shape.transitions.borrow().get(&name).cloned();
+                                let next_shape = if let Some(s) = existing_transition {
+                                    s
+                                } else {
+                                    let ns = inst_ptr.shape.transition(name.clone(), self.next_shape_id);
+                                    self.next_shape_id += 1;
+                                    inst_ptr.shape.transitions.borrow_mut().insert(name.clone(), ns.clone());
+                                    ns
+                                };
+                                
+                                let offset = next_shape.property_offsets.get(&name).cloned().unwrap();
+                                let ic = crate::chunk::ICEntry { last_shape_id: next_shape.id, offset };
+                                self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
+                                
+                                inst_ptr.shape = next_shape;
+                                inst_ptr.fields.push(value.clone());
+                            }
+                            self.push(value);
+                        }
+                        Obj::Object(obj_val) => {
+                            let mut obj_ptr = obj_val.borrow_mut();
+                            
+                            let mut cached_offset = None;
+                            if let Some(ic) = self.frames.last().unwrap().closure.function.chunk.property_caches.borrow()[ip] {
+                                if ic.last_shape_id == obj_ptr.shape.id {
+                                    cached_offset = Some(ic.offset);
+                                }
+                            }
+                            
+                            if let Some(offset) = cached_offset {
+                                obj_ptr.fields.borrow_mut()[offset] = value.clone();
+                            } else if let Some(&offset) = obj_ptr.shape.property_offsets.get(&name) {
+                                // Update IC
+                                let ic = crate::chunk::ICEntry { last_shape_id: obj_ptr.shape.id, offset };
+                                self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
+                                obj_ptr.fields.borrow_mut()[offset] = value.clone();
+                            } else {
+                                // Shape transition
+                                let existing_transition = obj_ptr.shape.transitions.borrow().get(&name).cloned();
+                                let next_shape = if let Some(s) = existing_transition {
+                                    s
+                                } else {
+                                    let ns = obj_ptr.shape.transition(name.clone(), self.next_shape_id);
+                                    self.next_shape_id += 1;
+                                    obj_ptr.shape.transitions.borrow_mut().insert(name.clone(), ns.clone());
+                                    ns
+                                };
+                                
+                                let offset = next_shape.property_offsets.get(&name).cloned().unwrap();
+                                let ic = crate::chunk::ICEntry { last_shape_id: next_shape.id, offset };
+                                self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
+                                
+                                obj_ptr.shape = next_shape;
+                                obj_ptr.fields.borrow_mut().push(value.clone());
+                            }
+                            self.push(value);
+                        }
+                        Obj::Dict(map) => {
+                            let key = Value::obj(Rc::new(Obj::String(name)));
+                            map.borrow_mut().insert(key, value.clone());
+                            self.push(value);
+                        }
+                        _ => return Err("Only instances, objects, and dicts have properties.".to_string()),
+                    }
+                } else {
+                    return Err("Target is not an object.".to_string());
+                }
+            }
+
+            OpCode::Throw => {
+                let error = self.pop()?;
+                self.handle_exception(error)?;
+            }
+
+            OpCode::Await => {
+                // Stub: if it's a promise, we'd yield. For now, just return value if it's immediate.
+                let val = self.pop()?;
+                self.push(val);
+            }
+
+            OpCode::Cast(name_idx) => {
+                let _target_type = self.read_string(name_idx)?;
+                // Dynamic cast: for now just no-op as everything is Value
+                // In a strictly typed VM, we'd check and convert.
+            }
+
+            OpCode::SetupHandler(offset) => {
+                let frame_idx = self.frames.len() - 1;
+                let stack_idx = self.stack.len();
+                let catch_ip = self.current_frame()?.ip + offset;
+                self.handlers.push(ExceptionHandler {
+                    frame_idx,
+                    stack_idx,
+                    catch_ip,
+                });
+            }
+
+            OpCode::PopHandler => {
+                self.handlers.pop();
+            }
+
+            OpCode::Finally => {
+                // Logic to pop a handler if we entered it normally?
+                // Tricky without a full Try/Finally opcode pairing.
+            }
+
+            OpCode::BuildClass(name_idx) => {
+                let name = self.read_string(name_idx)?;
+                let super_val = self.pop()?;
+                let mut superclass = None;
+                if super_val.is_obj() {
+                    if let Obj::Class(cls) = &*super_val.as_obj() {
+                        superclass = Some(cls.clone());
+                    }
+                }
+                let cls = Rc::new(crate::value::ClassValue { name, superclass, methods: RefCell::new(HashMap::new()) });
+                self.push(Value::obj(Rc::new(Obj::Class(cls))));
+            }
+
+            OpCode::Method(name_idx) => {
+                let name = self.read_string(name_idx)?;
+                let method = self.pop()?;
+                let class_val = self.peek(0)?;
+                if class_val.is_obj() {
+                    if let Obj::Class(cls) = &*class_val.as_obj() {
+                        cls.methods.borrow_mut().insert(name, method);
+                    } else {
+                        return Err("Method opcode applied to non-class object.".to_string());
+                    }
+                } else {
+                    return Err("Method opcode applied to non-class.".to_string());
+                }
+            }
+
         }
+        Ok(())
     }
 
     fn read_instruction(&mut self) -> Result<OpCode, String> {
@@ -748,11 +774,11 @@ impl VM {
         Err("Expected string constant.".to_string())
     }
 
-    fn push(&mut self, value: Value) {
+    pub fn push(&mut self, value: Value) {
         self.stack.push(value);
     }
 
-    fn pop(&mut self) -> Result<Value, String> {
+    pub fn pop(&mut self) -> Result<Value, String> {
         self.stack.pop().ok_or_else(|| "Stack underflow.".to_string())
     }
 
@@ -764,7 +790,7 @@ impl VM {
         }
     }
 
-    fn call_value(&mut self, arg_count: u8) -> Result<(), String> {
+    pub fn call_value(&mut self, arg_count: u8) -> Result<(), String> {
         let callee = self.peek(arg_count as usize)?.clone();
         if !callee.is_obj() {
             return Err(format!("Can only call functions, closures, and classes. Got: {}", callee));
@@ -797,15 +823,23 @@ impl VM {
                 let idx = self.stack.len() - arg_count as usize - 1;
                 self.stack[idx] = Value::obj(Rc::new(Obj::Object(inst.clone())));
                 
-                let methods = cls.methods.borrow();
-                let constructor_val = methods.get("init").or_else(|| methods.get("constructor"));
+                let mut constructor_val = None;
+                let mut current_class = Some(cls.clone());
+                while let Some(cls_ptr) = current_class {
+                    let methods = cls_ptr.methods.borrow();
+                    if let Some(v) = methods.get("init").or_else(|| methods.get("constructor")) {
+                        constructor_val = Some(v.clone());
+                        break;
+                    }
+                    current_class = cls_ptr.superclass.clone();
+                }
+
                 if let Some(constructor_val) = constructor_val {
                     if constructor_val.is_obj() {
                         let constructor_obj = constructor_val.as_obj();
                         match &*constructor_obj {
                             Obj::Closure(c) => {
                                 let c = c.clone();
-                                drop(methods);
                                 return self.call_closure(c, arg_count);
                             }
                             Obj::Function(f) => {
@@ -813,16 +847,12 @@ impl VM {
                                     function: f.clone(),
                                     upvalues: Vec::new(),
                                 });
-                                drop(methods);
                                 return self.call_closure(closure, arg_count);
                             }
                             _ => {}
                         }
                     }
-                } else if arg_count != 0 {
-                    return Err(format!("Expected 0 arguments but got {}.", arg_count));
                 }
-                drop(methods);
                 Ok(())
             }
             Obj::NativeFn(native) => {
@@ -831,7 +861,7 @@ impl VM {
                     args.push(self.pop()?);
                 }
                 args.reverse();
-                let result = native(&args)?;
+                let result = native(self, &args)?;
                 self.pop()?; // Pop the native fn
                 self.push(result);
                 Ok(())
@@ -919,7 +949,7 @@ impl VM {
         }
     }
 
-    fn is_falsey(&self, value: &Value) -> bool {
+    pub fn is_falsey(&self, value: &Value) -> bool {
         if value.is_null() { return true; }
         if value.is_bool() { return !value.as_bool(); }
         if value.is_int() { return value.as_int() == 0; }

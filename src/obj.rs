@@ -6,7 +6,7 @@ use crate::value::{Function, Instance, ClassValue, InstanceValue, Closure, Bound
 pub enum Obj {
     String(Rc<str>),
     Function(Rc<Function>),
-    NativeFn(fn(&[Value]) -> Result<Value, String>),
+    NativeFn(fn(&mut crate::vm::VM, &[Value]) -> Result<Value, String>),
     Array(RefCell<Vec<Value>>),
     Dict(RefCell<HashMap<Value, Value>>),
     Tuple(Vec<Value>),

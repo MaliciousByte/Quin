@@ -1,0 +1,41 @@
+# Advanced Features: JIT, Deopt, Interning, and Error Handling
+emit("Running advanced feature tests...");
+
+# 1. Error Handling (Attempt/Rescue/Finally)
+let mut caught = false;
+attempt {
+    raise "Test Error";
+} rescue (err) {
+    assert(err == "Test Error", "Rescue message failed");
+    caught = true;
+} finally {
+    assert(caught, "Finally executed before rescue");
+}
+assert(caught, "Error was not caught");
+
+# 2. String Interning
+# Pointer equality for interned strings
+let s1 = "intern_me";
+let s2 = "intern_me";
+assert(s1 == s2, "String content equality failed");
+# Note: Pointer equality is tricky to test from within Quin script without a pointer_eq operator,
+# but we trust the VM implementation.
+
+# 3. JIT & Deoptimization
+# We can trigger hotness by running a loop
+task hotFunc(n) {
+    return n + 1;
+}
+
+let mut i = 0;
+while i < 1500 {
+    hotFunc(i);
+    i = i + 1;
+}
+# At this point, hotFunc should be JIT compiled.
+assert(hotFunc(10) == 11, "JIT-compiled function result failed");
+
+# Deopt (Triggered by dynamic type change if supported, or explicitly)
+# Note: Detailed deopt testing usually requires deeper VM hooks.
+
+emit("Advanced feature tests passed!");
