@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::cell::RefCell;
 use crate::chunk::OpCode;
 use crate::value::{Value, Function, InstanceValue};
@@ -19,7 +19,7 @@ const STACK_MAX: usize = 256;
 // Use Closure from value.rs
 
 struct CallFrame {
-    closure: Rc<crate::value::Closure>,
+    closure: Arc<crate::value::Closure>,
     ip: usize,
     stack_offset: usize,
 }
@@ -33,14 +33,14 @@ struct ExceptionHandler {
 pub struct VM {
     frames: Vec<CallFrame>,
     stack: Vec<Value>,
-    pub globals: HashMap<Rc<str>, Value>,
+    pub globals: HashMap<Arc<str>, Value>,
     handlers: Vec<ExceptionHandler>,
-    open_upvalues: Vec<Rc<RefCell<crate::value::Upvalue>>>,
-    root_shape: Rc<crate::value::Shape>,
+    open_upvalues: Vec<Arc<RefCell<crate::value::Upvalue>>>,
+    root_shape: Arc<crate::value::Shape>,
     next_shape_id: usize,
     pub jit_engine: JitEngine,
     pub interner: StringInterner,
-    pub module_states: HashMap<Rc<str>, ModuleState>,
+    pub module_states: HashMap<Arc<str>, ModuleState>,
     pub script_dir: Option<PathBuf>,
 }
 
@@ -52,7 +52,7 @@ impl VM {
             globals: HashMap::new(),
             handlers: Vec::new(),
             open_upvalues: Vec::new(),
-            root_shape: Rc::new(crate::value::Shape::new(0)),
+            root_shape: Arc::new(crate::value::Shape::new(0)),
             next_shape_id: 1,
             jit_engine: JitEngine::new(),
             interner: StringInterner::new(),
@@ -66,7 +66,7 @@ impl VM {
         vm
     }
 
-    pub fn intern(&mut self, s: &str) -> Rc<str> {
+    pub fn intern(&mut self, s: &str) -> Arc<str> {
         self.interner.intern(s)
     }
 
@@ -76,7 +76,7 @@ impl VM {
         }
     }
 
-    pub fn load_module(&mut self, name: Rc<str>, _selective_items: &[Rc<str>]) -> Result<(), String> {
+    pub fn load_module(&mut self, name: Arc<str>, _selective_items: &[Arc<str>]) -> Result<(), String> {
         if let Some(state) = self.module_states.get(&name) {
             match state {
                 ModuleState::Loaded => return Ok(()),
@@ -119,13 +119,13 @@ impl VM {
             let old_frames_len = self.frames.len();
             let old_stack_len = self.stack.len();
 
-            let closure = Rc::new(crate::value::Closure {
-                function: Rc::new(function),
+            let closure = Arc::new(crate::value::Closure {
+                function: Arc::new(function),
                 upvalues: Vec::new(),
             });
             
             // Push closure for the call
-            self.stack.push(Value::obj(Rc::new(Obj::Closure(closure.clone()))));
+            self.stack.push(Value::obj(Arc::new(Obj::Closure(closure.clone()))));
             self.call_closure(closure, 0)?;
             
             // Run the module script
@@ -144,11 +144,11 @@ impl VM {
 
     pub fn interpret(&mut self, mut function: Function) -> Result<(), String> {
         self.intern_constants(&mut function);
-        let closure = Rc::new(crate::value::Closure {
-            function: Rc::new(function),
+        let closure = Arc::new(crate::value::Closure {
+            function: Arc::new(function),
             upvalues: Vec::new(),
         });
-        self.stack.push(Value::obj(Rc::new(Obj::Closure(closure.clone()))));
+        self.stack.push(Value::obj(Arc::new(Obj::Closure(closure.clone()))));
         self.call_closure(closure, 0)?;
 
         self.run()
@@ -162,11 +162,11 @@ impl VM {
                 match &*obj {
                     Obj::String(s) => {
                         let interned = self.interner.intern(s);
-                        function.chunk.constants[i] = Value::obj(Rc::new(Obj::String(interned)));
+                        function.chunk.constants[i] = Value::obj(Arc::new(Obj::String(interned)));
                     }
                     Obj::Function(f) => {
                         // Cast to mut to intern its constants too
-                        let f_ptr = Rc::as_ptr(f) as *mut Function;
+                        let f_ptr = Arc::as_ptr(f) as *mut Function;
                         unsafe {
                             self.intern_constants(&mut *f_ptr);
                         }
@@ -177,13 +177,13 @@ impl VM {
                         for elem in elements {
                             if elem.is_obj() {
                                 if let Obj::String(s) = &*elem.as_obj() {
-                                    new_elements.push(Value::obj(Rc::new(Obj::String(self.intern(s)))));
+                                    new_elements.push(Value::obj(Arc::new(Obj::String(self.intern(s)))));
                                     continue;
                                 }
                             }
                             new_elements.push(elem.clone());
                         }
-                        function.chunk.constants[i] = Value::obj(Rc::new(Obj::Tuple(new_elements)));
+                        function.chunk.constants[i] = Value::obj(Arc::new(Obj::Tuple(new_elements)));
                     }
                     _ => {}
                 }
@@ -229,11 +229,11 @@ impl VM {
                                 upvalues.push(self.current_frame()?.closure.upvalues[req.index].clone());
                             }
                         }
-                        let closure = Rc::new(crate::value::Closure {
+                        let closure = Arc::new(crate::value::Closure {
                             function: function.clone(),
                             upvalues,
                         });
-                        self.push(Value::obj(Rc::new(Obj::Closure(closure))));
+                        self.push(Value::obj(Arc::new(Obj::Closure(closure))));
                     } else {
                         return Err("Expected function for closure.".to_string());
                     }
@@ -333,7 +333,7 @@ impl VM {
                 } else if a.is_obj() || b.is_obj() {
                     let res = format!("{}{}", a, b);
                     let interned = self.intern(&res);
-                    self.push(Value::obj(Rc::new(Obj::String(interned))));
+                    self.push(Value::obj(Arc::new(Obj::String(interned))));
                 } else {
                     return Err("Operands must be two numbers or include a string.".to_string())
                 }
@@ -407,7 +407,7 @@ impl VM {
                     elements.push(self.pop()?);
                 }
                 elements.reverse();
-                self.push(Value::obj(Rc::new(Obj::Array(RefCell::new(elements)))));
+                self.push(Value::obj(Arc::new(Obj::Array(RefCell::new(elements)))));
             }
 
             OpCode::BuildDict(count) => {
@@ -417,7 +417,7 @@ impl VM {
                     let key = self.pop()?;
                     map.insert(key, value);
                 }
-                self.push(Value::obj(Rc::new(Obj::Dict(RefCell::new(map)))));
+                self.push(Value::obj(Arc::new(Obj::Dict(RefCell::new(map)))));
             }
 
             OpCode::BuildTuple(count) => {
@@ -426,7 +426,7 @@ impl VM {
                     elements.push(self.pop()?);
                 }
                 elements.reverse();
-                self.push(Value::obj(Rc::new(Obj::Tuple(elements))));
+                self.push(Value::obj(Arc::new(Obj::Tuple(elements))));
             }
 
             OpCode::BuildSet(count) => {
@@ -434,7 +434,7 @@ impl VM {
                 for _ in 0..count {
                     set.insert(self.pop()?);
                 }
-                self.push(Value::obj(Rc::new(Obj::Set(RefCell::new(set)))));
+                self.push(Value::obj(Arc::new(Obj::Set(RefCell::new(set)))));
             }
             
             OpCode::GetIndex => {
@@ -557,7 +557,7 @@ impl VM {
                     shape: current_shape,
                     fields: field_values,
                 };
-                self.push(Value::obj(Rc::new(Obj::Instance(Rc::new(RefCell::new(inst))))));
+                self.push(Value::obj(Arc::new(Obj::Instance(Arc::new(RefCell::new(inst))))));
             }
 
             OpCode::GetProperty(name_idx) => {
@@ -620,8 +620,8 @@ impl VM {
                                             match &*method_val.as_obj() {
                                                 Obj::Function(method) => {
                                                     self.pop()?;
-                                                    self.push(Value::obj(Rc::new(Obj::BoundMethod(Rc::new(crate::value::BoundMethodValue {
-                                                        receiver: Value::obj(Rc::new(Obj::Object(obj_val.clone()))),
+                                                    self.push(Value::obj(Arc::new(Obj::BoundMethod(Arc::new(crate::value::BoundMethodValue {
+                                                        receiver: Value::obj(Arc::new(Obj::Object(obj_val.clone()))),
                                                         method: method.clone(),
                                                     })))));
                                                     found = true;
@@ -629,8 +629,8 @@ impl VM {
                                                 }
                                                 Obj::Closure(closure) => {
                                                     self.pop()?;
-                                                    self.push(Value::obj(Rc::new(Obj::BoundMethod(Rc::new(crate::value::BoundMethodValue {
-                                                        receiver: Value::obj(Rc::new(Obj::Object(obj_val.clone()))),
+                                                    self.push(Value::obj(Arc::new(Obj::BoundMethod(Arc::new(crate::value::BoundMethodValue {
+                                                        receiver: Value::obj(Arc::new(Obj::Object(obj_val.clone()))),
                                                         method: closure.function.clone(),
                                                     })))));
                                                     found = true;
@@ -648,7 +648,7 @@ impl VM {
                             }
                         }
                         Obj::Dict(map) => {
-                            let key = Value::obj(Rc::new(Obj::String(name)));
+                            let key = Value::obj(Arc::new(Obj::String(name)));
                             self.pop()?; // pop obj
                             if let Some(val) = map.borrow().get(&key) {
                                 self.push(val.clone());
@@ -767,7 +767,7 @@ impl VM {
                             self.push(value);
                         }
                         Obj::Dict(map) => {
-                            let key = Value::obj(Rc::new(Obj::String(name)));
+                            let key = Value::obj(Arc::new(Obj::String(name)));
                             map.borrow_mut().insert(key, value.clone());
                             self.push(value);
                         }
@@ -828,8 +828,8 @@ impl VM {
                         superclass = Some(cls.clone());
                     }
                 }
-                let cls = Rc::new(crate::value::ClassValue { name, superclass, methods: RefCell::new(HashMap::new()) });
-                self.push(Value::obj(Rc::new(Obj::Class(cls))));
+                let cls = Arc::new(crate::value::ClassValue { name, superclass, methods: RefCell::new(HashMap::new()) });
+                self.push(Value::obj(Arc::new(Obj::Class(cls))));
             }
 
             OpCode::Method(name_idx) => {
@@ -869,7 +869,7 @@ impl VM {
         Ok(frame.closure.function.chunk.constants[idx].clone())
     }
 
-    fn read_string(&self, idx: usize) -> Result<Rc<str>, String> {
+    fn read_string(&self, idx: usize) -> Result<Arc<str>, String> {
         let val = self.read_constant(idx)?;
         if val.is_obj() {
             if let Obj::String(s) = &*val.as_obj() {
@@ -903,7 +903,7 @@ impl VM {
 
         match &*callee.as_obj() {
             Obj::Function(fun) => {
-                let closure = Rc::new(crate::value::Closure {
+                let closure = Arc::new(crate::value::Closure {
                     function: fun.clone(),
                     upvalues: Vec::new(),
                 });
@@ -912,7 +912,7 @@ impl VM {
             Obj::BoundMethod(bm) => {
                 let idx = self.stack.len() - arg_count as usize - 1;
                 self.stack[idx] = bm.receiver.clone();
-                let closure = Rc::new(crate::value::Closure {
+                let closure = Arc::new(crate::value::Closure {
                     function: bm.method.clone(),
                     upvalues: Vec::new(),
                 });
@@ -920,13 +920,13 @@ impl VM {
             }
             Obj::Closure(closure) => self.call_closure(closure.clone(), arg_count),
             Obj::Class(cls) => {
-                let inst = Rc::new(RefCell::new(InstanceValue {
+                let inst = Arc::new(RefCell::new(InstanceValue {
                     class: cls.clone(),
                     shape: self.root_shape.clone(),
                     fields: RefCell::new(Vec::new()),
                 }));
                 let idx = self.stack.len() - arg_count as usize - 1;
-                self.stack[idx] = Value::obj(Rc::new(Obj::Object(inst.clone())));
+                self.stack[idx] = Value::obj(Arc::new(Obj::Object(inst.clone())));
                 
                 let mut constructor_val = None;
                 let mut current_class = Some(cls.clone());
@@ -948,7 +948,7 @@ impl VM {
                                 return self.call_closure(c, arg_count);
                             }
                             Obj::Function(f) => {
-                                let closure = Rc::new(crate::value::Closure {
+                                let closure = Arc::new(crate::value::Closure {
                                     function: f.clone(),
                                     upvalues: Vec::new(),
                                 });
@@ -975,7 +975,7 @@ impl VM {
         }
     }
 
-    fn call_closure(&mut self, closure: Rc<crate::value::Closure>, arg_count: u8) -> Result<(), String> {
+    fn call_closure(&mut self, closure: Arc<crate::value::Closure>, arg_count: u8) -> Result<(), String> {
         if arg_count as usize != closure.function.arity {
             return Err(format!("Expected {} arguments but got {}.", closure.function.arity, arg_count));
         }
@@ -1025,14 +1025,14 @@ impl VM {
         Ok(())
     }
 
-    fn capture_upvalue(&mut self, index: usize) -> Rc<RefCell<crate::value::Upvalue>> {
+    fn capture_upvalue(&mut self, index: usize) -> Arc<RefCell<crate::value::Upvalue>> {
         for upvalue in &self.open_upvalues {
             if upvalue.borrow().index == index {
                 return upvalue.clone();
             }
         }
 
-        let upvalue = Rc::new(RefCell::new(crate::value::Upvalue {
+        let upvalue = Arc::new(RefCell::new(crate::value::Upvalue {
             index,
             closed: None,
         }));

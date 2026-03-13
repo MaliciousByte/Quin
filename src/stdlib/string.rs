@@ -1,41 +1,41 @@
-use std::rc::Rc;
+use std::sync::Arc;
 use crate::vm::VM;
 use crate::value::Value;
 use crate::obj::Obj;
 
 pub fn register(vm: &mut VM) {
     let name = vm.intern("upper");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_upper))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_upper))));
 
     let name = vm.intern("lower");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_lower))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_lower))));
 
     let name = vm.intern("trim");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_trim))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_trim))));
 
     let name = vm.intern("contains");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_contains))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_contains))));
 
     let name = vm.intern("replace");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_replace))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_replace))));
 
     let name = vm.intern("split");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_split))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_split))));
 
     let name = vm.intern("starts_with");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_starts_with))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_starts_with))));
 
     let name = vm.intern("ends_with");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_ends_with))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_ends_with))));
 
     let name = vm.intern("to_str");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_to_str))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_to_str))));
 
     let name = vm.intern("to_int");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_to_int))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_to_int))));
 
     let name = vm.intern("to_float");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_to_float))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_to_float))));
 }
 
 fn extract_string(v: &Value) -> Result<String, String> {
@@ -65,19 +65,19 @@ pub fn native_len(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
 fn native_upper(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let s = extract_string(args.first().ok_or("upper expects 1 argument")?)?;
     let interned = vm.intern(&s.to_uppercase());
-    Ok(Value::obj(Rc::new(Obj::String(interned))))
+    Ok(Value::obj(Arc::new(Obj::String(interned))))
 }
 
 fn native_lower(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let s = extract_string(args.first().ok_or("lower expects 1 argument")?)?;
     let interned = vm.intern(&s.to_lowercase());
-    Ok(Value::obj(Rc::new(Obj::String(interned))))
+    Ok(Value::obj(Arc::new(Obj::String(interned))))
 }
 
 fn native_trim(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let s = extract_string(args.first().ok_or("trim expects 1 argument")?)?;
     let interned = vm.intern(s.trim());
-    Ok(Value::obj(Rc::new(Obj::String(interned))))
+    Ok(Value::obj(Arc::new(Obj::String(interned))))
 }
 
 fn native_contains(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
@@ -93,7 +93,7 @@ fn native_replace(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let from = extract_string(&args[1])?;
     let to = extract_string(&args[2])?;
     let interned = vm.intern(&s.replace(&from, &to));
-    Ok(Value::obj(Rc::new(Obj::String(interned))))
+    Ok(Value::obj(Arc::new(Obj::String(interned))))
 }
 
 fn native_split(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
@@ -101,9 +101,9 @@ fn native_split(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let s = extract_string(&args[0])?;
     let delim = extract_string(&args[1])?;
     let parts: Vec<Value> = s.split(&delim)
-        .map(|p| Value::obj(Rc::new(Obj::String(vm.intern(p)))))
+        .map(|p| Value::obj(Arc::new(Obj::String(vm.intern(p)))))
         .collect();
-    Ok(Value::obj(Rc::new(Obj::Array(std::cell::RefCell::new(parts)))))
+    Ok(Value::obj(Arc::new(Obj::Array(std::cell::RefCell::new(parts)))))
 }
 
 fn native_starts_with(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
@@ -123,7 +123,7 @@ fn native_ends_with(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
 fn native_to_str(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = args.first().ok_or("to_str expects 1 argument")?;
     let interned = vm.intern(&format!("{}", v));
-    Ok(Value::obj(Rc::new(Obj::String(interned))))
+    Ok(Value::obj(Arc::new(Obj::String(interned))))
 }
 
 fn native_to_int(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {

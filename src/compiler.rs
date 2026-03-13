@@ -4,7 +4,7 @@ use crate::chunk::{Chunk, OpCode};
 use crate::token::{Token, TokenType};
 use crate::value::{Value, Function};
 use crate::obj::Obj;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct Local {
     pub name: String,
@@ -32,7 +32,7 @@ impl Compiler {
     pub fn new(name: &str, is_async: bool, is_method: bool, parent: Option<*mut Compiler>) -> Self {
         let mut compiler = Compiler {
             function: Function {
-                name: Rc::from(name),
+                name: Arc::from(name),
                 arity: 0,
                 is_async,
                 chunk: Chunk::new(),
@@ -85,7 +85,7 @@ impl Compiler {
                                 is_captured: false,
                             });
                         } else {
-                            let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
+                            let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
                             self.emit(OpCode::DefineGlobal(idx), name.line);
                         }
                     }
@@ -166,7 +166,7 @@ impl Compiler {
                 compiler.emit(OpCode::Return, 0);
 
                 let fun = compiler.function;
-                let idx = self.add_constant(Value::obj(Rc::new(Obj::Function(Rc::new(fun)))));
+                let idx = self.add_constant(Value::obj(Arc::new(Obj::Function(Arc::new(fun)))));
                 
                 if self.emitting_method {
                     self.emit(OpCode::Closure(idx), name.line);
@@ -174,7 +174,7 @@ impl Compiler {
                     self.emit(OpCode::Closure(idx), name.line);
                     self.locals.push(Local { name: name.lexeme.clone(), depth: self.scope_depth, is_captured: false });
                 } else {
-                    let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
+                    let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
                     self.emit(OpCode::Closure(idx), name.line);
                     self.emit(OpCode::DefineGlobal(name_idx), name.line);
                 }
@@ -217,17 +217,17 @@ impl Compiler {
             }
             Stmt::Struct { name, .. } => {
                 // Register struct as a global "type" name (Value::Null for now)
-                let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
+                let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
                 self.emit(OpCode::Null, name.line);
                 self.emit(OpCode::DefineGlobal(idx), name.line);
             }
             Stmt::Class { name, methods, is_abstract, interfaces, superclass } => {
                 let _ = is_abstract;
                 let _ = interfaces;
-                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
+                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
                 
                 if let Some(super_token) = superclass {
-                    let s_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(super_token.lexeme.clone())))));
+                    let s_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(super_token.lexeme.clone())))));
                     self.emit(OpCode::GetGlobal(s_idx), super_token.line);
                 } else {
                     self.emit(OpCode::Null, name.line);
@@ -239,7 +239,7 @@ impl Compiler {
                 for method in methods {
                     if let Stmt::Function { name: method_name, .. } = method {
                         self.compile_stmt(method)?;
-                        let m_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(method_name.lexeme.clone())))));
+                        let m_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(method_name.lexeme.clone())))));
                         self.emit(OpCode::Method(m_idx), name.line);
                     }
                 }
@@ -249,7 +249,7 @@ impl Compiler {
             }
             Stmt::Interface { name, .. } => {
                 // Interfaces are purely for static analysis right now
-                let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
+                let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
                 self.emit(OpCode::Null, name.line);
                 self.emit(OpCode::DefineGlobal(idx), name.line);
             }
@@ -263,7 +263,7 @@ impl Compiler {
                 self.emit(OpCode::Pop, 0); // pop match expr
             }
             Stmt::Enum { name, .. } => {
-                 let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.clone())))));
+                 let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
                  self.emit(OpCode::Null, name.line);
                  self.emit(OpCode::DefineGlobal(name_idx), name.line);
             }
@@ -271,21 +271,21 @@ impl Compiler {
                 // Type aliases are purely for static analysis, nothing to emit
             }
             Stmt::Emit(expr) => {
-                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from("emit")))));
+                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from("emit")))));
                 self.emit(OpCode::GetGlobal(name_idx), 0);
                 self.compile_expr(expr)?;
                 self.emit(OpCode::Call(1), 0);
                 self.emit(OpCode::Pop, 0);
             }
             Stmt::Import { module, items } => {
-                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(module.lexeme.as_str())))));
+                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(module.lexeme.as_str())))));
                 if items.is_empty() {
                     // use math;  →  load all exports
                     self.emit(OpCode::ImportModule(name_idx), module.line);
                 } else {
                     // use { sqrt, pow } from math;  →  push item names, then ImportItems
                     for item in items {
-                        let item_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(item.lexeme.as_str())))));
+                        let item_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(item.lexeme.as_str())))));
                         self.emit(OpCode::Constant(item_idx), item.line);
                     }
                     self.emit(OpCode::ImportItems(name_idx, items.len() as u8), module.line);
@@ -311,7 +311,7 @@ impl Compiler {
                         if *b { self.emit(OpCode::True, 0); } else { self.emit(OpCode::False, 0); }
                     }
                     Literal::String(s) => {
-                        let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(s.clone())))));
+                        let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(s.clone())))));
                         self.emit(OpCode::Constant(idx), 0);
                     }
                     Literal::Null => {
@@ -382,22 +382,22 @@ impl Compiler {
             }
             Expr::Get { object, name } => {
                 self.compile_expr(object)?;
-                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.as_str())))));
+                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
                 self.emit(OpCode::GetProperty(name_idx), name.line);
             }
             Expr::Set { object, name, value } => {
                 self.compile_expr(object)?;
                 self.compile_expr(value)?;
-                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.as_str())))));
+                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
                 self.emit(OpCode::SetProperty(name_idx), name.line);
             }
              Expr::StructInit { name, fields } => {
                 for (field_name, val) in fields {
-                    let field_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(field_name.lexeme.as_str())))));
+                    let field_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(field_name.lexeme.as_str())))));
                     self.emit(OpCode::Constant(field_idx), field_name.line);
                     self.compile_expr(val)?;
                 }
-                let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.as_str())))));
+                let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
                 self.emit(OpCode::BuildInstance(idx, fields.len() as u8), name.line);
             }
             Expr::Dict { entries } => {
@@ -422,7 +422,7 @@ impl Compiler {
             Expr::OptionalGet { object, name } => {
                 self.compile_expr(object)?;
                 let jump = self.emit_jump(OpCode::JumpIfNull(0)); 
-                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.as_str())))));
+                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
                 self.emit(OpCode::GetProperty(name_idx), name.line);
                 self.patch_jump(jump);
             }
@@ -467,7 +467,7 @@ impl Compiler {
                     crate::ast::Type::Simple(s) => s.clone(),
                     _ => "complex_type".to_string(), // Simplified
                 };
-                let idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(type_name.as_str())))));
+                let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(type_name.as_str())))));
                 self.emit(OpCode::Cast(idx), 0);
             }
             Expr::Lambda { params, body, is_async } => {
@@ -484,7 +484,7 @@ impl Compiler {
                 compiler.emit(OpCode::Return, 0);
 
                 let fun = compiler.function;
-                let idx = self.add_constant(Value::obj(Rc::new(Obj::Function(Rc::new(fun)))));
+                let idx = self.add_constant(Value::obj(Arc::new(Obj::Function(Arc::new(fun)))));
                 self.emit(OpCode::Closure(idx), 0);
             }
         }
@@ -505,7 +505,7 @@ impl Compiler {
                 self.emit(OpCode::GetUpvalue(arg), name.line);
             }
         } else {
-            let arg = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(name.lexeme.as_str())))));
+            let arg = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
             if can_assign {
                 self.emit(OpCode::SetGlobal(arg), name.line);
             } else {

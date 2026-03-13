@@ -1,20 +1,20 @@
-use std::rc::Rc;
+use std::sync::Arc;
 use crate::vm::VM;
 use crate::value::Value;
 use crate::obj::Obj;
 
 pub fn register(vm: &mut VM) {
     let name = vm.intern("clock");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_clock))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_clock))));
 
     let name = vm.intern("exit");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_exit))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_exit))));
 
     let name = vm.intern("env");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_env))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_env))));
 
     let name = vm.intern("args");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_args))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_args))));
 }
 
 fn native_clock(_vm: &mut VM, _args: &[Value]) -> Result<Value, String> {
@@ -41,7 +41,7 @@ fn native_env(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
             return match std::env::var(&**key) {
                 Ok(val) => {
                     let interned = vm.intern(&val);
-                    Ok(Value::obj(Rc::new(Obj::String(interned))))
+                    Ok(Value::obj(Arc::new(Obj::String(interned))))
                 }
                 Err(_) => Ok(Value::null()),
             };
@@ -52,7 +52,7 @@ fn native_env(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
 
 fn native_args(vm: &mut VM, _args: &[Value]) -> Result<Value, String> {
     let args: Vec<Value> = std::env::args()
-        .map(|a| Value::obj(Rc::new(Obj::String(vm.intern(&a)))))
+        .map(|a| Value::obj(Arc::new(Obj::String(vm.intern(&a)))))
         .collect();
-    Ok(Value::obj(Rc::new(Obj::Array(std::cell::RefCell::new(args)))))
+    Ok(Value::obj(Arc::new(Obj::Array(std::cell::RefCell::new(args)))))
 }

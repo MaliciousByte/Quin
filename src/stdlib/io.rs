@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 use crate::vm::VM;
 use crate::value::Value;
 use crate::obj::Obj;
@@ -6,28 +6,28 @@ use crate::obj::Obj;
 pub fn register_core(vm: &mut VM) {
     // emit is already registered in VM::new(), but we re-register here for consistency
     let name = vm.intern("emit");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_emit))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_emit))));
 
     let name = vm.intern("type_of");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_type_of))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_type_of))));
 
     let name = vm.intern("assert");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_assert))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_assert))));
     
     // len is incredibly common, consider it a core builtin
     let name = vm.intern("len");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(crate::stdlib::string::native_len))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(crate::stdlib::string::native_len))));
 }
 
 pub fn register(vm: &mut VM) {
     let name = vm.intern("input");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_input))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_input))));
 
     let name = vm.intern("read_file");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_read_file))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_read_file))));
 
     let name = vm.intern("write_file");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_write_file))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_write_file))));
 }
 
 fn native_emit(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
@@ -49,7 +49,7 @@ fn native_input(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
     let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
     let interned = vm.intern(trimmed);
-    Ok(Value::obj(Rc::new(Obj::String(interned))))
+    Ok(Value::obj(Arc::new(Obj::String(interned))))
 }
 
 fn native_read_file(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
@@ -59,7 +59,7 @@ fn native_read_file(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
             let content = std::fs::read_to_string(&**path)
                 .map_err(|e| format!("read_file error: {}", e))?;
             let interned = vm.intern(&content);
-            return Ok(Value::obj(Rc::new(Obj::String(interned))));
+            return Ok(Value::obj(Arc::new(Obj::String(interned))));
         }
     }
     Err("read_file: argument must be a string path".to_string())
@@ -92,7 +92,7 @@ fn native_type_of(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     else if v.is_obj() { v.as_obj().type_name() }
     else { "unknown" };
     let interned = vm.intern(type_name);
-    Ok(Value::obj(Rc::new(Obj::String(interned))))
+    Ok(Value::obj(Arc::new(Obj::String(interned))))
 }
 
 fn native_assert(vm: &mut VM, args: &[Value]) -> Result<Value, String> {

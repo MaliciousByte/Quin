@@ -1,5 +1,5 @@
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use crate::chunk::Chunk;
@@ -28,8 +28,8 @@ impl Value {
     pub fn int(i: i64) -> Self {
         Value(QNAN | TAG_INT | (i as u64 & 0x0000FFFFFFFFFFFF))
     }
-    pub fn obj(obj: Rc<Obj>) -> Self {
-        let ptr = Rc::into_raw(obj) as u64;
+    pub fn obj(obj: Arc<Obj>) -> Self {
+        let ptr = Arc::into_raw(obj) as u64;
         Value(SIGN_BIT | QNAN | ptr)
     }
 
@@ -59,11 +59,11 @@ impl Value {
             bits as i64
         }
     }
-    pub fn as_obj(&self) -> Rc<Obj> {
+    pub fn as_obj(&self) -> Arc<Obj> {
         let ptr = (self.0 & ! (SIGN_BIT | QNAN)) as *const Obj;
         unsafe { 
-            let rc = Rc::from_raw(ptr);
-            let cloned = Rc::clone(&rc);
+            let rc = Arc::from_raw(ptr);
+            let cloned = Arc::clone(&rc);
             std::mem::forget(rc); // Don't decrement count here
             cloned
         }
@@ -73,14 +73,14 @@ impl Value {
     pub fn mark(&self) {
         if self.is_obj() {
             let ptr = (self.0 & ! (SIGN_BIT | QNAN)) as *const Obj;
-            unsafe { Rc::increment_strong_count(ptr); }
+            unsafe { Arc::increment_strong_count(ptr); }
         }
     }
 
     pub fn unmark(&self) {
         if self.is_obj() {
             let ptr = (self.0 & ! (SIGN_BIT | QNAN)) as *const Obj;
-            unsafe { Rc::decrement_strong_count(ptr); }
+            unsafe { Arc::decrement_strong_count(ptr); }
         }
     }
 }
@@ -105,7 +105,7 @@ impl Drop for Value {
 }
 
 pub struct Function {
-    pub name: Rc<str>,
+    pub name: Arc<str>,
     pub arity: usize,
     pub is_async: bool,
     pub chunk: Chunk,
@@ -150,16 +150,16 @@ pub struct UpvalueRequirement {
 }
 
 pub struct Instance {
-    pub name: Rc<str>,
-    pub shape: Rc<Shape>,
+    pub name: Arc<str>,
+    pub shape: Arc<Shape>,
     pub fields: Vec<Value>,
 }
 
 #[derive(Clone)]
 pub struct Shape {
     pub id: usize,
-    pub property_offsets: HashMap<Rc<str>, usize>,
-    pub transitions: RefCell<HashMap<Rc<str>, Rc<Shape>>>,
+    pub property_offsets: HashMap<Arc<str>, usize>,
+    pub transitions: RefCell<HashMap<Arc<str>, Arc<Shape>>>,
 }
 
 impl Shape {
@@ -171,10 +171,10 @@ impl Shape {
         }
     }
 
-    pub fn transition(&self, name: Rc<str>, next_id: usize) -> Rc<Shape> {
+    pub fn transition(&self, name: Arc<str>, next_id: usize) -> Arc<Shape> {
         let mut offsets = self.property_offsets.clone();
         offsets.insert(name, offsets.len());
-        Rc::new(Shape {
+        Arc::new(Shape {
             id: next_id,
             property_offsets: offsets,
             transitions: RefCell::new(HashMap::new()),
@@ -184,21 +184,21 @@ impl Shape {
 
 #[derive(Clone)]
 pub struct ClassValue {
-    pub name: Rc<str>,
-    pub superclass: Option<Rc<ClassValue>>,
-    pub methods: RefCell<HashMap<Rc<str>, Value>>,
+    pub name: Arc<str>,
+    pub superclass: Option<Arc<ClassValue>>,
+    pub methods: RefCell<HashMap<Arc<str>, Value>>,
 }
 
 #[derive(Clone)]
 pub struct InstanceValue {
-    pub class: Rc<ClassValue>,
-    pub shape: Rc<Shape>,
+    pub class: Arc<ClassValue>,
+    pub shape: Arc<Shape>,
     pub fields: RefCell<Vec<Value>>,
 }
 
 pub struct Closure {
-    pub function: Rc<Function>,
-    pub upvalues: Vec<Rc<RefCell<Upvalue>>>,
+    pub function: Arc<Function>,
+    pub upvalues: Vec<Arc<RefCell<Upvalue>>>,
 }
 
 pub struct Upvalue {
@@ -209,7 +209,7 @@ pub struct Upvalue {
 #[derive(Clone)]
 pub struct BoundMethodValue {
     pub receiver: Value,
-    pub method: Rc<Function>,
+    pub method: Arc<Function>,
 }
 
 pub type NativeFn = fn(&mut crate::vm::VM, &[Value]) -> Result<Value, String>;

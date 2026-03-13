@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 use std::cell::RefCell;
 use crate::vm::VM;
 use crate::value::Value;
@@ -6,34 +6,34 @@ use crate::obj::Obj;
 
 pub fn register(vm: &mut VM) {
     let name = vm.intern("push");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_push))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_push))));
 
     let name = vm.intern("pop");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_pop))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_pop))));
 
     let name = vm.intern("slice");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_slice))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_slice))));
 
     let name = vm.intern("reverse");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_reverse))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_reverse))));
 
     let name = vm.intern("sort");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_sort))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_sort))));
 
     let name = vm.intern("range");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_range))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_range))));
 
     let name = vm.intern("join");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_join))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_join))));
 
     let name = vm.intern("map");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_map))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_map))));
 
     let name = vm.intern("filter");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_filter))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_filter))));
 
     let name = vm.intern("len");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_len))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_len))));
 }
 
 fn native_push(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
@@ -70,7 +70,7 @@ fn native_slice(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
                 elements.len()
             };
             let sliced: Vec<Value> = elements[start..end.min(elements.len())].to_vec();
-            return Ok(Value::obj(Rc::new(Obj::Array(RefCell::new(sliced)))));
+            return Ok(Value::obj(Arc::new(Obj::Array(RefCell::new(sliced)))));
         }
     }
     Err("slice: first argument must be an array".to_string())
@@ -142,7 +142,7 @@ fn native_range(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
             i += step;
         }
     }
-    Ok(Value::obj(Rc::new(Obj::Array(RefCell::new(result)))))
+    Ok(Value::obj(Arc::new(Obj::Array(RefCell::new(result)))))
 }
 
 fn native_join(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
@@ -161,7 +161,7 @@ fn native_join(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
             let elements = arr.borrow();
             let parts: Vec<String> = elements.iter().map(|v| format!("{}", v)).collect();
             let interned = vm.intern(&parts.join(&sep));
-            return Ok(Value::obj(Rc::new(Obj::String(interned))));
+            return Ok(Value::obj(Arc::new(Obj::String(interned))));
         }
     }
     Err("join: first argument must be an array".to_string())
@@ -188,7 +188,7 @@ fn native_map(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
         result_elements.push(vm.pop()?);
     }
 
-    Ok(Value::obj(Rc::new(Obj::Array(RefCell::new(result_elements)))))
+    Ok(Value::obj(Arc::new(Obj::Array(RefCell::new(result_elements)))))
 }
 
 fn native_filter(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
@@ -215,7 +215,7 @@ fn native_filter(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
         }
     }
 
-    Ok(Value::obj(Rc::new(Obj::Array(RefCell::new(result_elements)))))
+    Ok(Value::obj(Arc::new(Obj::Array(RefCell::new(result_elements)))))
 }
 
 fn native_len(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {

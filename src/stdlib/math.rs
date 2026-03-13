@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 use crate::vm::VM;
 use crate::value::Value;
 use crate::obj::Obj;
@@ -6,28 +6,28 @@ use crate::obj::Obj;
 pub fn register(vm: &mut VM) {
     // sqrt - already exists but we re-register for consistency
     let name = vm.intern("sqrt");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_sqrt))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_sqrt))));
 
     let name = vm.intern("pow");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_pow))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_pow))));
 
     let name = vm.intern("abs");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_abs))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_abs))));
 
     let name = vm.intern("floor");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_floor))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_floor))));
 
     let name = vm.intern("ceil");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_ceil))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_ceil))));
 
     let name = vm.intern("round");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_round))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_round))));
 
     let name = vm.intern("min");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_min))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_min))));
 
     let name = vm.intern("max");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_max))));
+    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_max))));
 
     let name = vm.intern("PI");
     vm.globals.insert(name, Value::float(std::f64::consts::PI));

@@ -1,21 +1,21 @@
-use std::rc::Rc;
+use std::sync::Arc;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use crate::value::{Function, Instance, ClassValue, InstanceValue, Closure, BoundMethodValue, Value};
 
 pub enum Obj {
-    String(Rc<str>),
-    Function(Rc<Function>),
+    String(Arc<str>),
+    Function(Arc<Function>),
     NativeFn(fn(&mut crate::vm::VM, &[Value]) -> Result<Value, String>),
     Array(RefCell<Vec<Value>>),
     Dict(RefCell<HashMap<Value, Value>>),
     Tuple(Vec<Value>),
     Set(RefCell<HashSet<Value>>),
-    Instance(Rc<RefCell<Instance>>),
-    Class(Rc<ClassValue>),
-    Object(Rc<RefCell<InstanceValue>>),
-    Closure(Rc<Closure>),
-    BoundMethod(Rc<BoundMethodValue>),
+    Instance(Arc<RefCell<Instance>>),
+    Class(Arc<ClassValue>),
+    Object(Arc<RefCell<InstanceValue>>),
+    Closure(Arc<Closure>),
+    BoundMethod(Arc<BoundMethodValue>),
 }
 
 impl Obj {

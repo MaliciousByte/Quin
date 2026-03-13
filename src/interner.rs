@@ -1,8 +1,8 @@
 use std::collections::HashSet;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct StringInterner {
-    strings: HashSet<Rc<str>>,
+    strings: HashSet<Arc<str>>,
 }
 
 impl StringInterner {
@@ -12,12 +12,12 @@ impl StringInterner {
         }
     }
 
-    pub fn intern(&mut self, s: &str) -> Rc<str> {
+    pub fn intern(&mut self, s: &str) -> Arc<str> {
         if let Some(existing) = self.strings.get(s) {
             return existing.clone();
         }
 
-        let interned: Rc<str> = Rc::from(s);
+        let interned: Arc<str> = Arc::from(s);
         self.strings.insert(interned.clone());
         interned
     }
