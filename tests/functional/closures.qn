@@ -1,4 +1,5 @@
 # Functional & Closures Test
+use array;
 emit("Running functional and closures tests...");
 
 # Simple Closures

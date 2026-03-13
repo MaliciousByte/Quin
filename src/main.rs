@@ -59,13 +59,15 @@ fn main() {
         Ok(f) => f,
         Err(e) => {
             eprintln!("Compiler error: {}", e);
-            return;
+            std::process::exit(1);
         }
     };
 
     let mut vm = VM::new();
+    vm.set_script_dir(file_path);
     if let Err(e) = vm.interpret(function) {
         eprintln!("Runtime error: {}", e);
+        std::process::exit(1);
     }
 }
 

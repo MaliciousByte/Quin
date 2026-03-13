@@ -13,6 +13,10 @@ $Failed = 0
 Write-Host "--- Starting Quin Test Suite ---" -ForegroundColor Cyan
 
 foreach ($file in $TestFiles) {
+    if ($file.Name -in "a.qn", "b.qn", "helpers.qn") {
+        continue
+    }
+
     Write-Host "Running: $($file.Name)... " -NoNewline
     
     $output = & $QuinExecutable $file.FullName 2>&1

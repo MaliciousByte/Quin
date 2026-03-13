@@ -4,9 +4,6 @@ use crate::value::Value;
 use crate::obj::Obj;
 
 pub fn register(vm: &mut VM) {
-    let name = vm.intern("len");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_len))));
-
     let name = vm.intern("upper");
     vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_upper))));
 
@@ -50,7 +47,7 @@ fn extract_string(v: &Value) -> Result<String, String> {
     Err("Expected a string".to_string())
 }
 
-fn native_len(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
+pub fn native_len(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     let v = args.first().ok_or("len expects 1 argument")?;
     if v.is_obj() {
         match &*v.as_obj() {

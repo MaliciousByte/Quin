@@ -1,9 +1,12 @@
 # Comprehensive Standard Library Test
+use io;
+use math;
+use array;
 emit("Running stdlib tests...");
 
 # 1. Math Module
 assert(abs(-10) == 10, "abs failed");
-assert(sqrt(16) == 4, "sqrt failed");
+assert(sqrt(16) == 4.0, "sqrt failed");
 assert(floor(3.9) == 3, "floor failed");
 assert(ceil(3.1) == 4, "ceil failed");
 assert(round(3.5) == 4, "round failed");
@@ -32,7 +35,7 @@ let t = type_of(42);
 assert(t == "int", "type_of int failed");
 assert(type_of("hi") == "str", "type_of str failed");
 assert(type_of(true) == "bool", "type_of bool failed");
-assert(type_of([]) == "Array", "type_of array failed");
+assert(type_of([]) == "array", "type_of array failed");
 
 # File IO (Cleanup if file exists)
 write_file("test_tmp.txt", "Hello Quin");

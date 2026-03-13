@@ -1,6 +1,6 @@
 # 📚 Quin Standard Library Reference
 
-Quin ships with a built-in standard library of native functions available globally — no `use` statement needed.
+Quin ships with a built-in standard library. Certain core functions (`emit`, `len`, `type_of`, `assert`) are available globally — no `use` statement needed. All other functions must be explicitly imported from their respective modules using `use module;` or `use { item } from module;`.
 
 ---
 
@@ -20,10 +20,15 @@ Quin ships with a built-in standard library of native functions available global
 | `E` | `float` | Euler's number (2.71828...) |
 
 ```quin
-emit(sqrt(16));       # 4.0
-emit(pow(2, 10));     # 1024.0
-emit(abs(-42));       # 42
-emit(floor(3.7));     # 3
+use math;
+
+emit(math.sqrt(16));       # 4.0
+emit(math.pow(2, 10));     # 1024.0
+emit(math.abs(-42));       # 42
+emit(math.floor(3.7));     # 3
+
+# Or use selective imports:
+use { ceil } from math;
 emit(ceil(3.2));      # 4
 ```
 
@@ -47,9 +52,11 @@ emit(ceil(3.2));      # 4
 | `to_float(v)` | `str\|int → float` | Parse/convert to float |
 
 ```quin
-let words = split("hello world", " ");  # ["hello", "world"]
-emit(upper("quin"));                     # "QUIN"
-emit(contains("hello", "ell"));          # true
+use string;
+
+let words = string.split("hello world", " ");  # ["hello", "world"]
+emit(string.upper("quin"));                     # "QUIN"
+emit(string.contains("hello", "ell"));          # true
 ```
 
 ---
@@ -71,12 +78,14 @@ emit(contains("hello", "ell"));          # true
 | `filter(arr, task)` | `array, task → array` | Filter elements |
 
 ```quin
-let nums = range(1, 6);  # [1, 2, 3, 4, 5]
-let squares = map(nums, task(x) => x * x);
-let evens = filter(nums, task(x) => x > 2);
-push(nums, 6);
-sort(nums);
-emit(join(nums, ", "));  # "1, 2, 3, 4, 5, 6"
+use array;
+
+let nums = array.range(1, 6);  # [1, 2, 3, 4, 5]
+let squares = array.map(nums, task(x) => x * x);
+let evens = array.filter(nums, task(x) => x > 2);
+array.push(nums, 6);
+array.sort(nums);
+emit(array.join(nums, ", "));  # "1, 2, 3, 4, 5, 6"
 ```
 
 ---
@@ -93,7 +102,9 @@ emit(join(nums, ", "));  # "1, 2, 3, 4, 5, 6"
 | `assert(cond, msg?)` | `bool, str? → void` | Fail if condition is falsey |
 
 ```quin
-let name = input("What's your name? ");
+use io;
+
+let name = io.input("What's your name? ");
 assert(len(name) > 0, "Name cannot be empty");
 emit("Hello, " + name + "!");
 emit(type_of(42));    # "int"
@@ -112,8 +123,10 @@ emit(type_of(3.14));  # "float"
 | `args()` | `→ str[]` | Command-line arguments |
 
 ```quin
-let start = clock();
+use os;
+
+let start = os.clock();
 # ... do work ...
-let elapsed = clock() - start;
+let elapsed = os.clock() - start;
 emit("Took " + elapsed + " seconds");
 ```

@@ -64,6 +64,10 @@ pub enum OpCode {
     // Error Handling
     SetupHandler(usize), // jump offset to rescue block
     PopHandler,
+
+    // Module System
+    ImportModule(usize),     // constant index → module name string (loads all exports)
+    ImportItems(usize, u8),  // constant index → module name, count of item names on stack
 }
 
 #[derive(Debug, Clone, Copy)]

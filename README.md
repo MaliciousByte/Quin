@@ -34,6 +34,7 @@ Beyond the engine, Quin is designed for modern development:
 
 - **Object-Oriented**: Full Class system with `base` inheritance, `trait` contracts, and `shared` members.
 - **Functional**: First-class `tasks`, full lexical closures, and the pipe operator (`|>`).
+- **Modules**: Native support for `use` imports, structured exports, and circular dependency resolution.
 - **Modern Syntax**: Null safety (`?.`, `??`), string interpolation, and advanced pattern matching.
 - **Error Handling**: Structured `attempt / rescue / finally` blocks with stack-aware propagation.
 
@@ -131,7 +132,8 @@ Multi-line input is supported — open a `{` and keep typing.
 - [x] Dynamic VM Core with Type-aware Values
 - [x] Interactive REPL
 - [x] Standard Library (Math, String, Array, IO, OS)
-- [ ] Module System & Package Manager
+- [x] Module System
+- [ ] Package Manager
 - [ ] Async Runtime
 - [ ] Network & HTTP Library
 

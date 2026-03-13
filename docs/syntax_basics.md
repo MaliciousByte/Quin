@@ -65,3 +65,29 @@ match a {
     _ => emit("Something else"),
 }
 ```
+
+## Imports & Modules
+
+Quin contains a robust module system allowing you to pull code from the Standard Library or from other `.qn` scripts you've written.
+
+### Standard Library Imports
+```quin
+use math;           # Imports the entire math module globally
+use { sqrt } from math;   # Imports only the sqrt functional bind
+```
+
+### File Imports
+```quin
+use "paths/utils.qn";   # Dynamically evaluates and imports variables/tasks from your local file
+```
+
+Everything marked `export` in the target file is imported into your current namespace.
+
+```quin
+# In math_utils.qn
+export task multiply(x, y) => x * y;
+
+# In main.qn
+use "math_utils";
+emit(multiply(10, 5));
+```

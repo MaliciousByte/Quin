@@ -277,8 +277,19 @@ impl Compiler {
                 self.emit(OpCode::Call(1), 0);
                 self.emit(OpCode::Pop, 0);
             }
-            Stmt::Import { .. } => {
-                // Import handled via runtime or pre-process, stub for now
+            Stmt::Import { module, items } => {
+                let name_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(module.lexeme.as_str())))));
+                if items.is_empty() {
+                    // use math;  →  load all exports
+                    self.emit(OpCode::ImportModule(name_idx), module.line);
+                } else {
+                    // use { sqrt, pow } from math;  →  push item names, then ImportItems
+                    for item in items {
+                        let item_idx = self.add_constant(Value::obj(Rc::new(Obj::String(Rc::from(item.lexeme.as_str())))));
+                        self.emit(OpCode::Constant(item_idx), item.line);
+                    }
+                    self.emit(OpCode::ImportItems(name_idx, items.len() as u8), module.line);
+                }
             }
         }
         Ok(())

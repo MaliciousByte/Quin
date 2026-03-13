@@ -1,0 +1,15 @@
+use io;
+
+# 1. Whole module file import
+use "helpers";
+
+assert(double(5) == 10, "File import (function) failed");
+assert(PI > 3.14, "File import (constant) failed");
+
+# 2. Selective stdlib import
+use { sqrt } from math;
+assert(sqrt(16) == 4.0, "Selective stdlib import failed");
+
+# Circular dependency detection is tested manually by running tests/modules/a.qn which fails appropriately.
+
+emit("Module system tests passed!");

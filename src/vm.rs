@@ -6,6 +6,13 @@ use crate::value::{Value, Function, InstanceValue};
 use crate::obj::Obj;
 use crate::jit::JitEngine;
 use crate::interner::StringInterner;
+use std::path::{Path, PathBuf};
+use std::fs;
+
+pub enum ModuleState {
+    Loading,
+    Loaded,
+}
 
 const STACK_MAX: usize = 256;
 
@@ -33,6 +40,8 @@ pub struct VM {
     next_shape_id: usize,
     pub jit_engine: JitEngine,
     pub interner: StringInterner,
+    pub module_states: HashMap<Rc<str>, ModuleState>,
+    pub script_dir: Option<PathBuf>,
 }
 
 impl VM {
@@ -47,16 +56,90 @@ impl VM {
             next_shape_id: 1,
             jit_engine: JitEngine::new(),
             interner: StringInterner::new(),
+            module_states: HashMap::new(),
+            script_dir: None,
         };
 
-        // Register standard library
-        crate::stdlib::register_all(&mut vm);
+        // Register core standard library globals
+        crate::stdlib::register_core(&mut vm);
         
         vm
     }
 
     pub fn intern(&mut self, s: &str) -> Rc<str> {
         self.interner.intern(s)
+    }
+
+    pub fn set_script_dir(&mut self, path: &str) {
+        if let Some(parent) = Path::new(path).parent() {
+            self.script_dir = Some(parent.to_path_buf());
+        }
+    }
+
+    pub fn load_module(&mut self, name: Rc<str>, _selective_items: &[Rc<str>]) -> Result<(), String> {
+        if let Some(state) = self.module_states.get(&name) {
+            match state {
+                ModuleState::Loaded => return Ok(()),
+                ModuleState::Loading => return Err(format!("Circular import detected: module '{}' is already being loaded", name)),
+            }
+        }
+
+        self.module_states.insert(name.clone(), ModuleState::Loading);
+
+        let is_stdlib = crate::stdlib::load_module(self, &name);
+        
+        if !is_stdlib {
+            // File import
+            let ext = if name.ends_with(".qn") { "" } else { ".qn" };
+            let filename = format!("{}{}", name, ext);
+            
+            let path = if let Some(dir) = &self.script_dir {
+                dir.join(&filename)
+            } else {
+                PathBuf::from(&filename)
+            };
+
+            let source = fs::read_to_string(&path)
+                .map_err(|e| format!("Could not load module '{}' at {}: {}", name, path.display(), e))?;
+
+            let mut lexer = crate::lexer::Lexer::new(&source);
+            let tokens = lexer.scan_tokens().map_err(|e| format!("Lexer error in module '{}': {}", name, e))?;
+
+            let mut parser = crate::parser::Parser::new(tokens);
+            let ast = parser.parse().map_err(|e| format!("Parser error in module '{}': {}", name, e))?;
+
+            let path_str = path.to_string_lossy().to_string();
+            let compiler = crate::compiler::Compiler::new(&path_str, false, false, None);
+            let function = compiler.compile(&ast).map_err(|e| format!("Compiler error in module '{}': {}", name, e))?;
+
+            // We need to execute the module script. It runs in the current VM's globals scope, 
+            // so exported variables are just inserted into the same globals map.
+            // Save current frames to isolate execution stack if needed, though pushing a new frame is sufficient.
+            
+            let old_frames_len = self.frames.len();
+            let old_stack_len = self.stack.len();
+
+            let closure = Rc::new(crate::value::Closure {
+                function: Rc::new(function),
+                upvalues: Vec::new(),
+            });
+            
+            // Push closure for the call
+            self.stack.push(Value::obj(Rc::new(Obj::Closure(closure.clone()))));
+            self.call_closure(closure, 0)?;
+            
+            // Run the module script
+            while self.frames.len() > old_frames_len {
+                let op = self.read_instruction()?;
+                self.execute_op(op)?;
+            }
+            
+            // Clean up stack
+            self.stack.truncate(old_stack_len);
+        }
+
+        self.module_states.insert(name, ModuleState::Loaded);
+        Ok(())
     }
 
     pub fn interpret(&mut self, mut function: Function) -> Result<(), String> {
@@ -211,6 +294,24 @@ impl VM {
                 let name = self.read_string(idx)?;
                 let val = self.pop()?;
                 self.globals.insert(name, val);
+            }
+            OpCode::ImportModule(name_idx) => {
+                let name = self.read_string(name_idx)?;
+                self.load_module(name, &[])?;
+            }
+            OpCode::ImportItems(name_idx, count) => {
+                let name = self.read_string(name_idx)?;
+                let mut items = Vec::new();
+                for _ in 0..count {
+                    let item_val = self.pop()?;
+                    if let Obj::String(s) = &*item_val.as_obj() {
+                        items.push(s.clone());
+                    } else {
+                        return Err("Import item must be a string.".to_string());
+                    }
+                }
+                items.reverse();
+                self.load_module(name, &items)?;
             }
 
             OpCode::Equal => {
@@ -670,7 +771,11 @@ impl VM {
                             map.borrow_mut().insert(key, value.clone());
                             self.push(value);
                         }
-                        _ => return Err("Only instances, objects, and dicts have properties.".to_string()),
+                        Obj::Class(cls_val) => {
+                            cls_val.methods.borrow_mut().insert(name, value.clone());
+                            self.push(value);
+                        }
+                        _ => return Err("Only instances, objects, classes, and dicts have properties.".to_string()),
                     }
                 } else {
                     return Err("Target is not an object.".to_string());

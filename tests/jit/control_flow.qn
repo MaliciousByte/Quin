@@ -1,0 +1,32 @@
+# JIT Control Flow Test
+# This test forces functions through the JIT hot path (1000+ calls)
+# and verifies that control flow works correctly in native code.
+
+fn classify(n) {
+    if n > 0 { return 1; }
+    else { return 0; }
+}
+
+let mut i = 0;
+let mut sum = 0;
+while i < 2000 {
+    sum = sum + classify(i);
+    i = i + 1;
+}
+assert(sum == 1999, "JIT control flow: if/else failed");
+
+# Test nested comparisons in JIT
+fn abs_diff(a, b) {
+    if a > b { return a - b; }
+    return b - a;
+}
+
+i = 0;
+let mut total = 0;
+while i < 1500 {
+    total = total + abs_diff(10, i);
+    i = i + 1;
+}
+assert(total == 1118755, "JIT control flow: nested comparison failed");
+
+emit("JIT control flow tests passed!");

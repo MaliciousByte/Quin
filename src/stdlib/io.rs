@@ -3,11 +3,23 @@ use crate::vm::VM;
 use crate::value::Value;
 use crate::obj::Obj;
 
-pub fn register(vm: &mut VM) {
+pub fn register_core(vm: &mut VM) {
     // emit is already registered in VM::new(), but we re-register here for consistency
     let name = vm.intern("emit");
     vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_emit))));
 
+    let name = vm.intern("type_of");
+    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_type_of))));
+
+    let name = vm.intern("assert");
+    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_assert))));
+    
+    // len is incredibly common, consider it a core builtin
+    let name = vm.intern("len");
+    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(crate::stdlib::string::native_len))));
+}
+
+pub fn register(vm: &mut VM) {
     let name = vm.intern("input");
     vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_input))));
 
@@ -16,12 +28,6 @@ pub fn register(vm: &mut VM) {
 
     let name = vm.intern("write_file");
     vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_write_file))));
-
-    let name = vm.intern("type_of");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_type_of))));
-
-    let name = vm.intern("assert");
-    vm.globals.insert(name, Value::obj(Rc::new(Obj::NativeFn(native_assert))));
 }
 
 fn native_emit(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {

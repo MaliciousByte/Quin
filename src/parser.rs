@@ -274,11 +274,29 @@ impl Parser {
             }
             self.consume(TokenType::RightBrace, "Expect '}' after destructured import.")?;
             self.consume(TokenType::From, "Expect 'from' after destructured import.")?;
-            let module = self.consume(TokenType::Identifier, "Expect module name.")?.clone();
+            let module = if self.match_token(&[TokenType::Identifier, TokenType::StringLit]) {
+                let mut token = self.previous().clone();
+                if token.ty == TokenType::StringLit {
+                    token.lexeme.remove(0);
+                    token.lexeme.pop();
+                }
+                token
+            } else {
+                return Err("Expect module name or path.".to_string());
+            };
             self.consume(TokenType::Semicolon, "Expect ';' after import.")?;
             Ok(Stmt::Import { module, items })
         } else {
-            let module = self.consume(TokenType::Identifier, "Expect module name.")?.clone();
+            let module = if self.match_token(&[TokenType::Identifier, TokenType::StringLit]) {
+                let mut token = self.previous().clone();
+                if token.ty == TokenType::StringLit {
+                    token.lexeme.remove(0);
+                    token.lexeme.pop();
+                }
+                token
+            } else {
+                return Err("Expect module name or path.".to_string());
+            };
             self.consume(TokenType::Semicolon, "Expect ';' after import.")?;
             Ok(Stmt::Import { module, items: vec![] })
         }

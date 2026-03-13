@@ -1,0 +1,5 @@
+export task double(n) {
+    return n * 2;
+}
+
+export const PI = 3.14159;

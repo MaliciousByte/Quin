@@ -1,0 +1,4 @@
+# Circular import test: a imports b
+use "b";
+
+export let a_val = 10;
