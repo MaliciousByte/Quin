@@ -6,6 +6,18 @@ Quin is a dynamically typed programming language built on a custom bytecode VM w
 
 ---
 
+## Why Quin
+
+Every major dynamic language carries decades of decisions made before modern hardware existed.
+
+Python's GIL was added in 1992 — before multi-core CPUs were standard. One lock, one core, always. JavaScript was written in 10 days in 1995 for a browser. Its single-threaded event loop is a fundamental constraint, not a bug to be fixed. Both languages have grown enormous ecosystems around these limitations, making them impossible to remove without breaking everything.
+
+Quin starts in 2026 with full knowledge of what those decisions cost. No GIL. No event loop. No 30-year-old design choices baked into the foundation. A clean VM built on Rust, using the same optimization techniques as V8 — NaN Boxing, Hidden Classes, Inline Caching, JIT compilation — but without the legacy that makes V8 so difficult to change.
+
+It is not finished. But the foundation is being built correctly.
+
+---
+
 ## What Quin Is
 
 Quin is a **work-in-progress language** with a production-grade VM core. The runtime is built from scratch in Rust with four optimization techniques working together:
@@ -47,6 +59,7 @@ What is in progress:
 ---
 
 ## Quick Start
+
 ```bash
 git clone https://github.com/MaliciousByte/Quin.git
 cd Quin
@@ -59,7 +72,7 @@ cargo build --release
 emit("Hello, World!");
 ```
 
-**Functions and control flow:**
+**Functions:**
 ```quin
 task fib(n) {
     if n < 2 { return n; }
@@ -67,27 +80,6 @@ task fib(n) {
 }
 
 emit(fib(10));
-```
-
-**Classes:**
-```quin
-class Animal {
-    task init(name) {
-        self.name = name;
-    }
-    task speak() {
-        emit(self.name + " makes a sound.");
-    }
-}
-
-class Dog extends Animal {
-    task speak() {
-        emit(self.name + " barks.");
-    }
-}
-
-let d = Dog("Rex");
-d.speak();
 ```
 
 **Modules:**
@@ -105,6 +97,7 @@ emit(squares);
 ## VM Architecture
 
 Quin's execution pipeline:
+
 ```
 Source
   → Lexer       (text → tokens)
@@ -117,90 +110,6 @@ Source
 ```
 
 **Memory model:** No garbage collector. Reference counting via Rust's `Arc<T>`. Memory freed the instant the last reference drops. No stop-the-world pauses.
-
----
-
-## Language Reference
-
-### Variables
-```quin
-let x = 42;
-let name = "Quin";
-let flag = true;
-```
-
-### Control Flow
-```quin
-if x > 0 {
-    emit("positive");
-} elif x == 0 {
-    emit("zero");
-} else {
-    emit("negative");
-}
-
-while x > 0 {
-    x = x - 1;
-}
-
-for item in [1, 2, 3] {
-    emit(item);
-}
-```
-
-### Functions and Closures
-```quin
-task add(a, b) {
-    return a + b;
-}
-
-let double = task(x) => x * 2;
-
-# Pipe operator
-let result = 5 |> double;
-emit(result);
-```
-
-### Error Handling
-```quin
-attempt {
-    let data = read_file("missing.txt");
-} rescue e {
-    emit("Error: " + e);
-} finally {
-    emit("Done.");
-}
-```
-
-### Standard Library
-
-| Module | Key Functions |
-|--------|--------------|
-| `math` | `sqrt`, `pow`, `abs`, `floor`, `ceil`, `round`, `min`, `max`, `PI`, `E` |
-| `string` | `upper`, `lower`, `trim`, `split`, `contains`, `replace`, `starts_with`, `ends_with` |
-| `array` | `push`, `pop`, `slice`, `sort`, `range`, `map`, `filter`, `join` |
-| `io` | `input`, `read_file`, `write_file`, `type_of`, `assert` |
-| `os` | `clock`, `exit`, `env`, `args` |
-
-Core functions available without import: `emit`, `len`, `type_of`, `assert`
-
----
-
-## Interactive REPL
-
-Run `quin` with no arguments:
-```
-  ╔══════════════════════════════════════╗
-  ║   🌌 Quin v0.1.0                     ║
-  ║   Interactive Mode                   ║
-  ╚══════════════════════════════════════╝
-
->>> let x = 10;
->>> emit(x * 2);
-20
-```
-
-Commands: `.help`, `.exit`, `.clear`
 
 ---
 
@@ -227,9 +136,31 @@ Commands: `.help`, `.exit`, `.clear`
 
 ---
 
+## Contributing
+
+Quin is early stage and every contribution matters. The codebase is intentionally readable — if you know Rust and are interested in compilers, VMs, or language design, there is meaningful work to do at every level.
+
+**Good first areas:**
+
+- Expanding JIT opcode coverage in `jit.rs`
+- Adding stdlib functions to existing modules
+- Writing `.qn` test cases that expose edge cases
+- Documentation improvements
+
+**Before contributing:**
+
+1. Read through `value.rs`, `vm.rs`, and `jit.rs` to understand the core architecture
+2. Run the test suite — `cargo build --release` then `.\tests\run_all.ps1`
+3. Open an issue before starting large changes so effort isn't duplicated
+
+All contributions must pass the full test suite with zero compiler warnings on release build.
+
+---
+
 ## Building from Source
 
 Requirements: Rust toolchain (stable)
+
 ```bash
 cargo build --release
 ```
