@@ -9,6 +9,7 @@ use crate::vm::VM;
 pub fn register_core(vm: &mut VM) {
     // Only register core built-ins globally: emit, type_of, assert, len.
     io::register_core(vm);
+    os::register(vm);
 }
 
 pub fn load_module(vm: &mut VM, name: &str) -> bool {

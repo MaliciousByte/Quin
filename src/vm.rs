@@ -374,13 +374,51 @@ impl VM {
                 };
 
                 if is_hot {
-                    let function = {
-                        let frame = self.current_frame_mut()?;
-                        println!("Function {} is now HOT (loop)!", frame.closure.function.name);
-                        frame.closure.function.clone()
-                    };
-                    let native_ptr = self.jit_engine.compile(&function);
-                    function.native_ptr.store(native_ptr as *mut u8, std::sync::atomic::Ordering::Relaxed);
+                    let closure = self.current_frame()?.closure.clone();
+                    let native_ptr = self.jit_engine.compile(&closure.function);
+
+                    if !native_ptr.is_null() {
+                        closure.function.native_ptr.store(
+                            native_ptr as *mut u8,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+
+                        // OSR: pop interpreter frame, restart function in JIT from IP=0.
+                        // Locals reinitialise from constants — result is identical but
+                        // all 10M iterations run as native code, not interpreted.
+                        let frame = self.frames.pop().unwrap();
+                        let stack_offset = frame.stack_offset;
+
+                        if self.stack.len() < stack_offset + closure.function.max_locals {
+                            self.stack.resize(
+                                stack_offset + closure.function.max_locals,
+                                Value::null(),
+                            );
+                        }
+
+                        let native_fn: extern "C" fn(*mut VM, *const Value) -> Value =
+                            unsafe { std::mem::transmute(native_ptr) };
+                        let args_ptr = unsafe { self.stack.as_ptr().add(stack_offset) };
+                        let result = native_fn(self as *mut VM, args_ptr);
+
+                        if result.is_deopt() {
+                            // Type guard failed — resume interpreter at deopt IP
+                            let deopt_ip = result.as_deopt();
+                            self.frames.push(CallFrame {
+                                closure,
+                                ip: deopt_ip,
+                                stack_offset,
+                            });
+                            // Do NOT return — let interpreter continue from deopt frame
+                        } else {
+                            // JIT finished — push result and return to caller immediately.
+                            // CRITICAL: return Ok(()) so interpreter does NOT re-run the loop.
+                            self.stack.truncate(stack_offset);
+                            self.push(result);
+                            return Ok(());
+                        }
+                    }
+                    // JIT bailed (null ptr) — continue interpreting silently
                 }
             }
             OpCode::JumpIfNull(offset) => {
@@ -985,7 +1023,6 @@ impl VM {
         }
 
         if closure.function.increment_hotness() {
-            println!("Function {} is now HOT (call)!", closure.function.name);
             let native_ptr = self.jit_engine.compile(&closure.function);
             closure.function.native_ptr.store(native_ptr as *mut u8, std::sync::atomic::Ordering::Relaxed);
         }
@@ -993,24 +1030,33 @@ impl VM {
         let native_ptr = closure.function.native_ptr.load(std::sync::atomic::Ordering::Relaxed);
         if !native_ptr.is_null() {
              let native_fn: extern "C" fn(*mut VM, *const Value) -> Value = unsafe { std::mem::transmute(native_ptr) };
-             let args_ptr = unsafe { self.stack.as_ptr().add(self.stack.len() - arg_count as usize) };
+             let stack_offset = self.stack.len() - arg_count as usize - 1;
+             
+             // Ensure stack has room for all locals before calling JIT
+             if self.stack.len() < stack_offset + closure.function.max_locals {
+                 self.stack.resize(stack_offset + closure.function.max_locals, Value::null());
+             }
+             
+             let args_ptr = unsafe { self.stack.as_ptr().add(stack_offset) };
              let result = native_fn(self as *mut VM, args_ptr);
              
-             if !result.is_null() {
-                 if result.is_deopt() {
-                     let deopt_ip = result.as_deopt();
-                     let frame = CallFrame {
-                        closure,
-                        ip: deopt_ip,
-                        stack_offset: self.stack.len() - arg_count as usize - 1,
-                     };
-                     self.frames.push(frame);
-                     return Ok(());
-                 }
-
-                 for _ in 0..arg_count + 1 {
-                     self.stack.pop();
-                 }
+             if result.is_deopt() {
+                 // Type guard failed — resume interpreter at deopt IP.
+                 // Use the already-computed stack_offset, not a recalculation
+                 // (the stack may have been resized for max_locals above).
+                 let deopt_ip = result.as_deopt();
+                 let frame = CallFrame {
+                    closure,
+                    ip: deopt_ip,
+                    stack_offset,
+                 };
+                 self.frames.push(frame);
+                 return Ok(());
+             } else {
+                 // JIT returned successfully.
+                 // Truncate to stack_offset (not a pop loop) because the stack
+                 // may have been extended for max_locals above arg_count + 1.
+                 self.stack.truncate(stack_offset);
                  self.stack.push(result);
                  return Ok(());
              }

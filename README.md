@@ -1,157 +1,256 @@
-# 🌌 Quin Programming Language
+# 🌌 Quin
 
-**Quin** is a dynamically typed, high-performance programming language built on a custom two-tier VM written in Rust. It starts interpreting immediately like Python, and compiles hot code to native machine instructions at runtime — no manual compilation step, no waiting.
+Quin is a dynamically typed programming language built on a custom bytecode VM written in Rust. It interprets code immediately and compiles hot functions to native machine code at runtime via a Cranelift JIT compiler.
 
-It was built to answer one question:
-> *Why do I have to choose between writing code that feels good and code that runs fast?*
-
-Python feels good but crawls under load. JavaScript is fast but single-threaded and "25 years of weird." Quin is neither.
+> *Fast enough to matter. Simple enough to enjoy. Clean enough to last.*
 
 ---
 
-## ⚡ The Dynamic Fast Path
+## What Quin Is
 
-Most dynamic languages accept a "speed tax" — the cost of figuring out types at runtime. Quin eliminates this tax with four techniques used together in a Rust-native VM. No other language currently combines all four in a clean-slate design.
+Quin is a **work-in-progress language** with a production-grade VM core. The runtime is built from scratch in Rust with four optimization techniques working together:
 
-### 1. NaN Boxing — Everything is 8 Bytes
-In Python, every variable is a heavy C struct carrying type information, reference counts, and the actual value — often 28+ bytes per value. In Quin, every value — integers, floats, booleans, nulls, and object pointers — is packed into a single 64-bit float using the IEEE 754 NaN bit space.
-**The result:** every value on the stack is exactly 8 bytes, fits in one CPU register, and requires zero "unwrapping" to read.
+- **NaN Boxing** — every value (int, float, bool, null, object pointer) packed into 8 bytes
+- **Hidden Classes (Shapes)** — property access via direct memory offset, not hash lookup
+- **Inline Caching** — repeated property reads reduced to a single pointer comparison
+- **Cranelift JIT** — functions called 1000+ times compiled to native machine code
 
-### 2. Hidden Classes (Shapes) — No More Dictionary Lookups
-Quin assigns every object a **Shape** — a shared map that says "for any object like this, name is always at memory position 0." Instead of searching a hash map (like Python/JS), the VM jumps directly to the exact memory address. Objects with identical property layouts share the same Shape automatically.
-
-### 3. Inline Caching — The Shortcut That Remembers
-When the VM reads `user.name` for the first time, it stores a note at that specific instruction: *"last time, this was Shape #5 and name was at index 0."* Next time, it checks — still Shape #5? Skip everything, read index 0 directly. A full property lookup collapses to a single pointer comparison.
-
-### 4. Cranelift JIT — Native Machine Code at Runtime
-The VM watches every function. Once something is called 1,000+ times, it's marked "hot". **Cranelift** — a Rust-native code generation backend — compiles that function directly to machine code while the program is running. The next call skips the interpreter entirely.
+These are the same techniques used in V8 (JavaScript). Quin implements all four in a clean-slate Rust VM with no garbage collector and no legacy constraints.
 
 ---
 
-## 💎 Language Features
+## Current State
 
-Beyond the engine, Quin is designed for modern development:
+Quin is at an **early but functional stage**. The VM is correct, the test suite passes, and the core optimizations are implemented. It is not yet production-ready and is not faster than Node.js on general benchmarks. The JIT is being expanded incrementally.
 
-- **Object-Oriented**: Full Class system with `base` inheritance, `trait` contracts, and `shared` members.
-- **Functional**: First-class `tasks`, full lexical closures, and the pipe operator (`|>`).
-- **Modules**: Native support for `use` imports, structured exports, and circular dependency resolution.
-- **Modern Syntax**: Null safety (`?.`, `??`), string interpolation, and advanced pattern matching.
-- **Error Handling**: Structured `attempt / rescue / finally` blocks with stack-aware propagation.
+What works today:
 
----
+- Full bytecode compiler (lexer → parser → AST → bytecode)
+- Interpreter with NaN-boxed value stack
+- Hidden Classes and Inline Caching for object property access
+- JIT compilation via Cranelift for hot functions (integer arithmetic, control flow)
+- Deoptimization — JIT bails back to interpreter cleanly on type mismatches
+- String interning via `StringInterner`
+- Module system — `use math;` and `use { sqrt } from math;`
+- Full OOP — classes, inheritance, structs, closures
+- Standard library — math, string, array, io, os modules
+- Interactive REPL
 
-## 📊 Quin vs Python vs JavaScript
+What is in progress:
 
-| Workload | Python (CPython) | JavaScript (V8) | Quin |
-| :--- | :--- | :--- | :--- |
-| **Cold Startup** | 🐢 Slow | ⚡ Fast | ⚡ Fast |
-| **Simple Scripts** | 🐢 1x baseline | 🚀 ~50x Python | 🚀 ~50x Python |
-| **Heavy Math Loops** | 🐢 Slow | 🚀 Fast (JIT) | 🚀 Fast (JIT) |
-| **Multi-core Parallel** | 🔴 GIL blocks it | 🔴 Single-threaded | ✅ True parallelism |
-| **Long-running Apps** | 🟡 Acceptable | 🟡 GC stutters | ✅ No GC pauses |
-| **Memory per Value** | ~28 bytes | 8 bytes | 8 bytes |
-
-### Parallelism
-Python has the GIL — only one thread runs Python code at a time. JavaScript has the event loop — fundamentally single-threaded. **Quin is backed by Rust. No GIL. Real threads.** If you have 8 cores, Quin can use all 8 simultaneously.
-
-### Memory Management
-JavaScript GC pauses cause micro-stutters. Python's cyclic GC freezes execution. **Quin cleans memory incrementally** using a mix of RC and Rust ownership — the program never stops to "take out the trash."
+- JIT property access (hot `obj.name` reads still interpreted)
+- Type feedback vectors (needed for speculative compilation)
+- True parallelism (Arc migration done, parallel runtime not yet built)
+- Async / await runtime
+- Package manager
 
 ---
 
-## 📜 Legacy Baggage
-
-**JavaScript** was created in 10 days in 1995. It carries 30 years of quirks — `typeof null === "object"`, implicit coercions, `var` hoisting, and `this` context madness.
-
-**Python** carries C-era design decisions and the GIL — a lock added in 1992 that restricts modern hardware.
-
-**Quin is a clean slate.** No design decisions made before the internet existed. No backwards compatibility with 1995.
-
----
-
-## 🛠️ Quick Start
-
-### Your First Program
-
-Run Quin instantly by passing a file to the CLI:
+## Quick Start
 ```bash
-quin main.qn
+git clone https://github.com/MaliciousByte/Quin.git
+cd Quin
+cargo build --release
+./target/release/quin examples/hello.qn
 ```
 
-Or dive into the documentation to start building.
+**Hello World:**
+```quin
+emit("Hello, World!");
+```
+
+**Functions and control flow:**
+```quin
+task fib(n) {
+    if n < 2 { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+emit(fib(10));
+```
+
+**Classes:**
+```quin
+class Animal {
+    task init(name) {
+        self.name = name;
+    }
+    task speak() {
+        emit(self.name + " makes a sound.");
+    }
+}
+
+class Dog extends Animal {
+    task speak() {
+        emit(self.name + " barks.");
+    }
+}
+
+let d = Dog("Rex");
+d.speak();
+```
+
+**Modules:**
+```quin
+use math;
+use { map, filter } from array;
+
+let nums = [1, 2, 3, 4, 5];
+let squares = map(nums, task(x) => x * x);
+emit(squares);
+```
 
 ---
 
-## 📖 Documentation
+## VM Architecture
 
-Explore the full capabilities of Quin:
+Quin's execution pipeline:
+```
+Source
+  → Lexer       (text → tokens)
+  → Parser      (tokens → AST)
+  → Compiler    (AST → bytecode chunks)
+  → Interpreter (bytecode → execution)
+  → Profiler    (counts calls silently)
+  → JIT         (hot functions → native code via Cranelift)
+  → Deopt       (type mismatch → back to interpreter at exact IP)
+```
 
-- [**Introduction**](docs/introduction.md): Overview and Philosophy.
-- [**Getting Started**](docs/getting_started.md): Installation and your first program.
-- [**Syntax Basics**](docs/syntax_basics.md): Variables, types, and control flow.
-- [**Collections**](docs/collections.md): Arrays, Dicts, Sets, and Tuples.
-- [**Functional Programming**](docs/functional_programming.md): Tasks, closures, and pipes.
-- [**Object-Oriented Programming**](docs/oop.md): Classes, traits, and shared members.
-- [**Error Handling**](docs/error_handling.md): `attempt`, `rescue`, and `raise`.
-- [**Standard Library**](docs/stdlib.md): Built-in functions (math, string, array, IO, OS).
+**Memory model:** No garbage collector. Reference counting via Rust's `Arc<T>`. Memory freed the instant the last reference drops. No stop-the-world pauses.
 
 ---
 
-## 💻 Interactive REPL
+## Language Reference
 
-Run `quin` without arguments to launch the interactive shell:
+### Variables
+```quin
+let x = 42;
+let name = "Quin";
+let flag = true;
+```
 
+### Control Flow
+```quin
+if x > 0 {
+    emit("positive");
+} elif x == 0 {
+    emit("zero");
+} else {
+    emit("negative");
+}
+
+while x > 0 {
+    x = x - 1;
+}
+
+for item in [1, 2, 3] {
+    emit(item);
+}
+```
+
+### Functions and Closures
+```quin
+task add(a, b) {
+    return a + b;
+}
+
+let double = task(x) => x * 2;
+
+# Pipe operator
+let result = 5 |> double;
+emit(result);
+```
+
+### Error Handling
+```quin
+attempt {
+    let data = read_file("missing.txt");
+} rescue e {
+    emit("Error: " + e);
+} finally {
+    emit("Done.");
+}
+```
+
+### Standard Library
+
+| Module | Key Functions |
+|--------|--------------|
+| `math` | `sqrt`, `pow`, `abs`, `floor`, `ceil`, `round`, `min`, `max`, `PI`, `E` |
+| `string` | `upper`, `lower`, `trim`, `split`, `contains`, `replace`, `starts_with`, `ends_with` |
+| `array` | `push`, `pop`, `slice`, `sort`, `range`, `map`, `filter`, `join` |
+| `io` | `input`, `read_file`, `write_file`, `type_of`, `assert` |
+| `os` | `clock`, `exit`, `env`, `args` |
+
+Core functions available without import: `emit`, `len`, `type_of`, `assert`
+
+---
+
+## Interactive REPL
+
+Run `quin` with no arguments:
 ```
   ╔══════════════════════════════════════╗
   ║   🌌 Quin v0.1.0                     ║
   ║   Interactive Mode                   ║
   ╚══════════════════════════════════════╝
 
-  Type .help for commands, .exit to quit.
-
->>> let x = 42;
+>>> let x = 10;
 >>> emit(x * 2);
-84
->>> task greet(name) { emit("Hello {name}!"); }
->>> greet("World");
-Hello World!
+20
 ```
 
-Multi-line input is supported — open a `{` and keep typing.
+Commands: `.help`, `.exit`, `.clear`
 
 ---
 
-## 🛣️ Roadmap
+## Roadmap
 
-- [x] Custom Bytecode VM
-- [x] Full Closure & Upvalue Support
-- [x] Structured Error Handling (`attempt/rescue`)
-- [x] Class & Trait System
-- [x] String Interning & NaN-Boxing
-- [ ] Static Type System (Type Checking & Enforcement)
-- [x] Dynamic VM Core with Type-aware Values
-- [x] Interactive REPL
-- [x] Standard Library (Math, String, Array, IO, OS)
+- [x] Bytecode VM
+- [x] NaN Boxing
+- [x] Hidden Classes and Inline Caching
+- [x] String Interning
+- [x] Closures and Upvalues
+- [x] Class and Inheritance System
+- [x] Cranelift JIT (integer arithmetic, control flow)
+- [x] Deoptimization
 - [x] Module System
-- [ ] Package Manager
-- [ ] Async Runtime
-- [ ] Network & HTTP Library
+- [x] Standard Library
+- [x] Interactive REPL
+- [ ] JIT — property access
+- [ ] JIT — type feedback and speculation
+- [ ] True parallelism (Arc foundation ready)
+- [ ] Async / await runtime
+- [ ] Package manager
+- [ ] Language server (LSP)
+- [ ] Static type checker (optional)
 
 ---
 
-## 🛠️ Build and Release
+## Building from Source
 
-To compile Quin from source for distribution:
+Requirements: Rust toolchain (stable)
+```bash
+cargo build --release
+```
 
-1.  **Clone the Repo**: `git clone https://github.com/MaliciousByte/Quin.git`
-2.  **Build Release Binary**:
-    ```bash
-    cargo build --release
-    ```
-3.  **Find the Binary**:
-    The standalone executable will be at `target/release/quin.exe` (Windows) or `target/release/quin` (macOS/Linux).
+Binary at `target/release/quin` (Linux/macOS) or `target/release/quin.exe` (Windows).
 
 ---
 
-**License**: MIT  
-**Author**: MaliciousByte & The Quin Contributors
+## Documentation
+
+- [Introduction](docs/introduction.md)
+- [Getting Started](docs/getting_started.md)
+- [Syntax Basics](docs/syntax_basics.md)
+- [Collections](docs/collections.md)
+- [Functional Programming](docs/functional_programming.md)
+- [Object-Oriented Programming](docs/oop.md)
+- [Error Handling](docs/error_handling.md)
+- [Standard Library](docs/stdlib.md)
+
+---
+
+**License:** MIT  
+**Author:** MaliciousByte  
+**Status:** Active development — contributions welcome

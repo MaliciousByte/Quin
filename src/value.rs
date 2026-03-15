@@ -107,6 +107,7 @@ impl Drop for Value {
 pub struct Function {
     pub name: Arc<str>,
     pub arity: usize,
+    pub max_locals: usize,
     pub is_async: bool,
     pub chunk: Chunk,
     pub upvalues: Vec<UpvalueRequirement>,
@@ -122,6 +123,7 @@ impl Clone for Function {
         Function {
             name: self.name.clone(),
             arity: self.arity,
+            max_locals: self.max_locals,
             is_async: self.is_async,
             chunk: self.chunk.clone(),
             upvalues: self.upvalues.clone(),

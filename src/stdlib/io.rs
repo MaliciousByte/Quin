@@ -6,7 +6,11 @@ use crate::obj::Obj;
 pub fn register_core(vm: &mut VM) {
     // emit is already registered in VM::new(), but we re-register here for consistency
     let name = vm.intern("emit");
-    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_emit))));
+    let emit_fn = Value::obj(Arc::new(Obj::NativeFn(native_emit)));
+    vm.globals.insert(name, emit_fn.clone());
+
+    let name = vm.intern("print");
+    vm.globals.insert(name, emit_fn);
 
     let name = vm.intern("type_of");
     vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_type_of))));

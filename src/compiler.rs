@@ -34,6 +34,7 @@ impl Compiler {
             function: Function {
                 name: Arc::from(name),
                 arity: 0,
+                max_locals: 0,
                 is_async,
                 chunk: Chunk::new(),
                 upvalues: Vec::new(),
@@ -51,6 +52,7 @@ impl Compiler {
         // slot 0 for local call frame
         let slot0_name = if is_method { "self".to_string() } else { "".to_string() };
         compiler.locals.push(Local { name: slot0_name, depth: 0, is_captured: false });
+        compiler.function.max_locals = 1;
         compiler
     }
 
@@ -84,6 +86,9 @@ impl Compiler {
                                 depth: self.scope_depth,
                                 is_captured: false,
                             });
+                            if self.locals.len() > self.function.max_locals {
+                                self.function.max_locals = self.locals.len();
+                            }
                         } else {
                             let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
                             self.emit(OpCode::DefineGlobal(idx), name.line);
@@ -155,6 +160,7 @@ impl Compiler {
                 for (p, _, _) in params {
                     compiler.locals.push(Local { name: p.lexeme.clone(), depth: compiler.scope_depth, is_captured: false });
                 }
+                compiler.function.max_locals = compiler.locals.len();
                 for s in body {
                     compiler.compile_stmt(s)?;
                 }
@@ -199,6 +205,9 @@ impl Compiler {
                 
                 self.begin_scope();
                 self.locals.push(Local { name: catch_param.lexeme.clone(), depth: self.scope_depth, is_captured: false });
+                if self.locals.len() > self.function.max_locals {
+                    self.function.max_locals = self.locals.len();
+                }
                 self.compile_stmt(catch_body)?;
                 self.end_scope();
                 
@@ -477,6 +486,7 @@ impl Compiler {
                 for (p, _, _) in params {
                     compiler.locals.push(Local { name: p.lexeme.clone(), depth: compiler.scope_depth, is_captured: false });
                 }
+                compiler.function.max_locals = compiler.locals.len();
                 for s in body {
                     compiler.compile_stmt(s)?;
                 }

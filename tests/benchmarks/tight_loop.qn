@@ -1,0 +1,20 @@
+use os;
+
+task tight_loop() {
+    let i = 0;
+    let sum = 0;
+    while i < 10000000 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    return sum;
+}
+
+# Warm up — triggers JIT compilation
+tight_loop();
+
+# This call runs fully in native code
+let t1 = clock();
+tight_loop();
+let t2 = clock();
+emit("JIT time: " + (t2 - t1) + "s");
