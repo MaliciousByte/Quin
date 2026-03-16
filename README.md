@@ -31,30 +31,45 @@ These are the same techniques used in V8 (JavaScript). Quin implements all four 
 
 ---
 
+## Performance
+
+On integer loop benchmarks with JIT warmed, Quin matches V8 (Node.js):
+
+| Benchmark | Python (CPython) | Node.js (V8) | Quin JIT |
+|-----------|-----------------|--------------|----------|
+| 10M integer loop | ~460ms | ~9ms | ~7ms |
+
+Quin is **~65x faster than CPython** and **on par with V8** for this workload. JIT coverage is expanding — property access, floats, and closures are next.
+
+---
+
 ## Current State
 
-Quin is at an **early but functional stage**. The VM is correct, the test suite passes, and the core optimizations are implemented. It is not yet production-ready and is not faster than Node.js on general benchmarks. The JIT is being expanded incrementally.
+Quin is at an **early but functional stage**. The VM is correct, the test suite passes, and the core optimizations are implemented. On integer-heavy workloads the JIT matches Node.js (V8) performance. General benchmark parity is in progress as JIT coverage expands.
 
-What works today:
+**What works today:**
 
 - Full bytecode compiler (lexer → parser → AST → bytecode)
 - Interpreter with NaN-boxed value stack
 - Hidden Classes and Inline Caching for object property access
-- JIT compilation via Cranelift for hot functions (integer arithmetic, control flow)
+- JIT compilation via Cranelift — integer arithmetic, control flow, all local variables
 - Deoptimization — JIT bails back to interpreter cleanly on type mismatches
+- OSR (On-Stack Replacement) — hot loops switch to native code mid-execution
 - String interning via `StringInterner`
 - Module system — `use math;` and `use { sqrt } from math;`
+- Circular import detection and protection
 - Full OOP — classes, inheritance, structs, closures
 - Standard library — math, string, array, io, os modules
 - Interactive REPL
+- VS Code / VSCodium syntax highlighting
 
-What is in progress:
+**What is in progress:**
 
 - JIT property access (hot `obj.name` reads still interpreted)
 - Type feedback vectors (needed for speculative compilation)
 - True parallelism (Arc migration done, parallel runtime not yet built)
 - Async / await runtime
-- Package manager
+- Package manager (Quill)
 
 ---
 
@@ -113,6 +128,14 @@ Source
 
 ---
 
+## Editor Support
+
+**VS Code / VSCodium:** Install the [Quin Language](https://open-vsx.org/extension/MaliciousByte/quin-lang) extension for syntax highlighting of `.qn` files.
+
+Features: keyword highlighting, string and number literals, function and type names, all Quin-specific operators (`|>`, `?.`, `??`), bracket matching, and comment highlighting.
+
+---
+
 ## Roadmap
 
 - [x] Bytecode VM
@@ -121,16 +144,18 @@ Source
 - [x] String Interning
 - [x] Closures and Upvalues
 - [x] Class and Inheritance System
-- [x] Cranelift JIT (integer arithmetic, control flow)
+- [x] Cranelift JIT (integer arithmetic, control flow, all locals)
 - [x] Deoptimization
-- [x] Module System
-- [x] Standard Library
+- [x] OSR — On-Stack Replacement
+- [x] Module System with circular import protection
+- [x] Standard Library (math, string, array, io, os)
 - [x] Interactive REPL
+- [x] VS Code / VSCodium syntax highlighting
 - [ ] JIT — property access
 - [ ] JIT — type feedback and speculation
 - [ ] True parallelism (Arc foundation ready)
 - [ ] Async / await runtime
-- [ ] Package manager
+- [ ] Package manager (Quill)
 - [ ] Language server (LSP)
 - [ ] Static type checker (optional)
 
