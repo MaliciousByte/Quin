@@ -10,7 +10,7 @@ Quin is a dynamically typed programming language built on a custom bytecode VM w
 
 Every major dynamic language carries decades of decisions made before modern hardware existed.
 
-Python's GIL was added in 1992 — before multi-core CPUs were standard. One lock, one core, always. JavaScript was written in 10 days in 1995 for a browser. Its single-threaded event loop is a fundamental constraint, not a bug to be fixed. Both languages have grown enormous ecosystems around these limitations, making them impossible to remove without breaking everything.
+~~Python's GIL was added in 1992 — before multi-core CPUs were standard. One lock, one core, always.~~ JavaScript was written in 10 days in 1995 for a browser. Its single-threaded event loop is a fundamental constraint, not a bug to be fixed. Both languages have grown enormous ecosystems around these limitations, making them impossible to remove without breaking everything.
 
 Quin starts in 2026 with full knowledge of what those decisions cost. No GIL. No event loop. No 30-year-old design choices baked into the foundation. A clean VM built on Rust, using the same optimization techniques as V8 — NaN Boxing, Hidden Classes, Inline Caching, JIT compilation — but without the legacy that makes V8 so difficult to change.
 
