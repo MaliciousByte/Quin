@@ -74,7 +74,7 @@ fn main() {
 fn run_repl() {
     println!();
     println!("  \x1b[1;36m╔══════════════════════════════════════╗\x1b[0m");
-    println!("  \x1b[1;36m║\x1b[0m   \x1b[1;35m🌌 Quin v0.1.0\x1b[0m                     \x1b[1;36m║\x1b[0m");
+    println!("  \x1b[1;36m║\x1b[0m   \x1b[1;35m🌌 Quin v0.2.0\x1b[0m                     \x1b[1;36m║\x1b[0m");
     println!("  \x1b[1;36m║\x1b[0m   Interactive Mode                   \x1b[1;36m║\x1b[0m");
     println!("  \x1b[1;36m╚══════════════════════════════════════╝\x1b[0m");
     println!();

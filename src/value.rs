@@ -137,7 +137,7 @@ impl Clone for Function {
 impl Function {
     pub fn increment_hotness(&self) -> bool {
         let count = self.call_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if count >= 1000 && !self.is_hot.load(std::sync::atomic::Ordering::Relaxed) {
+        if count >= 50 && !self.is_hot.load(std::sync::atomic::Ordering::Relaxed) {
             self.is_hot.store(true, std::sync::atomic::Ordering::Relaxed);
             return true;
         }

@@ -1018,7 +1018,7 @@ impl VM {
             return Err(format!("Expected {} arguments but got {}.", closure.function.arity, arg_count));
         }
 
-        if self.frames.len() == 64 {
+        if self.frames.len() == 512 {
             return Err("Stack overflow.".to_string());
         }
 
