@@ -143,7 +143,7 @@ impl JitEngine {
             let mut wl = vec![0usize];
             while let Some(ip) = wl.pop() {
                 let d = ip_to_depth[&ip];
-                let mut push = |m: &mut HashMap<usize,usize>, w: &mut Vec<usize>, nip, nd: usize| {
+                let push = |m: &mut HashMap<usize,usize>, w: &mut Vec<usize>, nip, nd: usize| {
                     if nip < chunk.code.len() && !m.contains_key(&nip) {
                         m.insert(nip, nd); w.push(nip);
                     }
@@ -591,6 +591,20 @@ impl JitEngine {
                     };
                     b.ins().return_(&[rv]);
                     block_terminated = true;
+                }
+                OpCode::GetGlobal(_) => {
+                    // Push Unknown placeholder — globals resolved by interpreter
+                    b.def_var(vars[current_depth], c_null);
+                    var_is_raw[current_depth] = false;
+                    slot_types[current_depth] = JitType::Unknown;
+                    current_depth += 1;
+                }
+
+                OpCode::Call(_) => {
+                    // bail — SSA vars not materialized to stack yet
+                    // any function with a Call runs fully interpreted
+                    // TODO: stack materialization → recursive JIT
+                    bail!();
                 }
 
                 _ => bail!(), // unsupported opcode — fall back to interpreter
