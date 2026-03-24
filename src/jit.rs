@@ -21,16 +21,16 @@ use std::collections::HashMap;
 // This causes Cranelift to fail silently (define_function error → null_ptr),
 // so the interpreter runs instead, producing the ~1.7s result.
 //
-// FIXES IN THIS VERSION:
-//   1. start_depth = arity + 1 (correct local layout)
-//   2. Separate real_entry block (no ip=0 self-loop)
-//   3. JumpIfFalse uses last_cmp directly via brif (no select overhead)
-//   4. Correct peek semantics: SetLocal and JumpIfFalse do NOT consume
-//   5. Explicit error logging so failures are visible
+// QUASAR JIT — current opcode support:
+//   integers: Constant, GetLocal, SetLocal, Add/Sub/Mul/Div, Equal/Greater/Less
+//             JumpIfFalse, Jump, Loop, Return, Negate, Not
+//   floats:   same ops with ProvenFloat — fadd/fsub/fmul/fdiv + fcmp
+//   other:    GetGlobal (placeholder), Call (bail — no stack materialization yet)
+//   pending:  GetProperty/SetProperty, closures, stack materialization for Call
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum JitType { Unknown, ProvenInt }
+enum JitType { Unknown, ProvenInt, ProvenFloat }
 
 pub struct JitEngine {
     ctx: codegen::Context,
@@ -284,8 +284,8 @@ impl JitEngine {
             ($d:expr) => {{
                 let mut a = Vec::with_capacity($d);
                 for i in 0..$d {
-                    let want_raw = var_types.get(i).copied().unwrap_or(JitType::Unknown)
-                                   == JitType::ProvenInt;
+                    let av_vt    = var_types.get(i).copied().unwrap_or(JitType::Unknown);
+                    let want_raw = av_vt == JitType::ProvenInt || av_vt == JitType::ProvenFloat;
                     let v = b.use_var(vars[i]);
                     a.push(if want_raw && !var_is_raw[i] {
                         b.ins().band(v, c_pmask)
@@ -325,10 +325,9 @@ impl JitEngine {
                     let params = b.block_params(pre).to_vec();
                     for i in 0..d {
                         b.def_var(vars[i], params[i]);
-                        let tr = var_types.get(i).copied().unwrap_or(JitType::Unknown)
-                                 == JitType::ProvenInt;
-                        var_is_raw[i] = tr;
-                        slot_types[i] = var_types.get(i).copied().unwrap_or(JitType::Unknown);
+                        let bv_vt = var_types.get(i).copied().unwrap_or(JitType::Unknown);
+                        var_is_raw[i] = bv_vt == JitType::ProvenInt || bv_vt == JitType::ProvenFloat;
+                        slot_types[i] = bv_vt;
                     }
                     // Hoist guards for any ProvenInt function args
                     for i in 0..=function.arity {
@@ -357,10 +356,9 @@ impl JitEngine {
                 let params = b.block_params(target_blk).to_vec();
                 for i in 0..d {
                     b.def_var(vars[i], params[i]);
-                    let tr = var_types.get(i).copied().unwrap_or(JitType::Unknown)
-                             == JitType::ProvenInt;
-                    var_is_raw[i] = tr;
-                    slot_types[i] = var_types.get(i).copied().unwrap_or(JitType::Unknown);
+                    let bv_vt2 = var_types.get(i).copied().unwrap_or(JitType::Unknown);
+                    var_is_raw[i] = bv_vt2 == JitType::ProvenInt || bv_vt2 == JitType::ProvenFloat;
+                    slot_types[i] = bv_vt2;
                 }
             }
 
@@ -394,6 +392,12 @@ impl JitEngine {
                         let cv = b.ins().iconst(types::I64, val.as_int()); b.def_var(vars[current_depth], cv);
                         var_is_raw[current_depth] = true;
                         slot_types[current_depth] = JitType::ProvenInt;
+                    } else if val.is_float() {
+                        // Float: store raw f64 bits as i64 — no NaN-boxing tag needed.
+                        // Floats don't overlap with QNAN tags so raw bits are valid.
+                        let cv = b.ins().iconst(types::I64, bits as i64); b.def_var(vars[current_depth], cv);
+                        var_is_raw[current_depth] = true;   // raw f64 bits
+                        slot_types[current_depth] = JitType::ProvenFloat;
                     } else {
                         let cv = b.ins().iconst(types::I64, bits as i64); b.def_var(vars[current_depth], cv);
                         var_is_raw[current_depth] = false;
@@ -429,8 +433,8 @@ impl JitEngine {
                     if current_depth == 0 || *idx >= num_vars { bail!(); }
                     let top   = current_depth - 1;
                     let top_v = b.use_var(vars[top]);
-                    let want_raw = var_types.get(*idx).copied()
-                                   .unwrap_or(JitType::Unknown) == JitType::ProvenInt;
+                    let idx_vt   = var_types.get(*idx).copied().unwrap_or(JitType::Unknown);
+                    let want_raw = idx_vt == JitType::ProvenInt || idx_vt == JitType::ProvenFloat;
                     let stored = if want_raw && !var_is_raw[top] {
                         b.ins().band(top_v, c_pmask)
                     } else if !want_raw && var_is_raw[top] {
@@ -438,58 +442,97 @@ impl JitEngine {
                     } else { top_v };
                     b.def_var(vars[*idx], stored);
                     var_is_raw[*idx]  = want_raw;
-                    slot_types[*idx]  = var_types.get(*idx).copied().unwrap_or(JitType::Unknown);
+                    slot_types[*idx]  = idx_vt;
                     // depth unchanged (peek)
                 }
 
-                // FULLY UNBOXED arithmetic for ProvenInt operands
+                // Arithmetic: fully unboxed for ProvenInt; bitcast path for ProvenFloat
                 OpCode::Add | OpCode::Subtract | OpCode::Multiply | OpCode::Divide => {
                     if current_depth < 2 { bail!(); }
-                    let a = current_depth - 2;
+                    let a  = current_depth - 2;
                     let b_ = current_depth - 1;
-                    let result = if slot_types[a] == JitType::ProvenInt
-                               && slot_types[b_] == JitType::ProvenInt
-                    {
+                    let is_float = slot_types[a] == JitType::ProvenFloat
+                                || slot_types[b_] == JitType::ProvenFloat;
+
+                    let (result, result_type) = if is_float {
+                        // Float path: bitcast i64→f64, compute, bitcast f64→i64
+                        let av_i = b.use_var(vars[a]);
+                        let bv_i = b.use_var(vars[b_]);
+                        let av_f = if slot_types[a] == JitType::ProvenFloat {
+                            b.ins().bitcast(types::F64, MemFlags::new(), av_i)
+                        } else {
+                            // int → float promotion
+                            let raw = if var_is_raw[a] { av_i } else { b.ins().band(av_i, c_pmask) };
+                            b.ins().fcvt_from_sint(types::F64, raw)
+                        };
+                        let bv_f = if slot_types[b_] == JitType::ProvenFloat {
+                            b.ins().bitcast(types::F64, MemFlags::new(), bv_i)
+                        } else {
+                            let raw = if var_is_raw[b_] { bv_i } else { b.ins().band(bv_i, c_pmask) };
+                            b.ins().fcvt_from_sint(types::F64, raw)
+                        };
+                        let fr = match op {
+                            OpCode::Add      => b.ins().fadd(av_f, bv_f),
+                            OpCode::Subtract => b.ins().fsub(av_f, bv_f),
+                            OpCode::Multiply => b.ins().fmul(av_f, bv_f),
+                            OpCode::Divide   => b.ins().fdiv(av_f, bv_f),
+                            _ => unreachable!(),
+                        };
+                        (b.ins().bitcast(types::I64, MemFlags::new(), fr), JitType::ProvenFloat)
+                    } else if slot_types[a] == JitType::ProvenInt && slot_types[b_] == JitType::ProvenInt {
+                        // Fully unboxed integer path — zero tag overhead
                         let av = get_raw!(a);
                         let bv = get_raw!(b_);
-                        match op {
+                        let r = match op {
                             OpCode::Add      => b.ins().iadd(av, bv),
                             OpCode::Subtract => b.ins().isub(av, bv),
                             OpCode::Multiply => b.ins().imul(av, bv),
                             OpCode::Divide   => b.ins().sdiv(av, bv),
                             _ => unreachable!(),
-                        }
+                        };
+                        (r, JitType::ProvenInt)
                     } else {
                         ensure_raw_int!(a,  ip);
                         ensure_raw_int!(b_, ip);
                         let av = get_raw!(a);
                         let bv = get_raw!(b_);
-                        match op {
+                        let r = match op {
                             OpCode::Add      => b.ins().iadd(av, bv),
                             OpCode::Subtract => b.ins().isub(av, bv),
                             OpCode::Multiply => b.ins().imul(av, bv),
                             OpCode::Divide   => b.ins().sdiv(av, bv),
                             _ => unreachable!(),
-                        }
+                        };
+                        (r, JitType::ProvenInt)
                     };
                     current_depth -= 1;
                     b.def_var(vars[current_depth - 1], result);
                     var_is_raw[current_depth - 1]  = true;
-                    slot_types[current_depth - 1]  = JitType::ProvenInt;
+                    slot_types[current_depth - 1]  = result_type;
                 }
 
                 OpCode::Equal | OpCode::Greater | OpCode::Less => {
                     if current_depth < 2 { bail!(); }
                     let a  = current_depth - 2;
                     let bx = current_depth - 1;
-                    let cond = if matches!(op, OpCode::Equal) {
+                    let is_float_cmp = slot_types[a] == JitType::ProvenFloat
+                                    || slot_types[bx] == JitType::ProvenFloat;
+                    let cond = if is_float_cmp {
+                        let av_i = b.use_var(vars[a]);
+                        let bv_i = b.use_var(vars[bx]);
+                        let av_f = b.ins().bitcast(types::F64, MemFlags::new(), av_i);
+                        let bv_f = b.ins().bitcast(types::F64, MemFlags::new(), bv_i);
+                        let fcc = if matches!(op, OpCode::Equal)   { FloatCC::Equal }
+                                  else if matches!(op, OpCode::Greater) { FloatCC::GreaterThan }
+                                  else { FloatCC::LessThan };
+                        b.ins().fcmp(fcc, av_f, bv_f)
+                    } else if matches!(op, OpCode::Equal) {
                         if slot_types[a] == JitType::ProvenInt && slot_types[bx] == JitType::ProvenInt {
                             let av = get_raw!(a); let bv = get_raw!(bx); b.ins().icmp(IntCC::Equal, av, bv)
                         } else {
                             let av = get_tagged!(a); let bv = get_tagged!(bx); b.ins().icmp(IntCC::Equal, av, bv)
                         }
                     } else {
-                        // Greater / Less require integer payloads
                         ensure_raw_int!(a,  ip);
                         ensure_raw_int!(bx, ip);
                         let cc = if matches!(op, OpCode::Greater) { IntCC::SignedGreaterThan }
@@ -520,13 +563,23 @@ impl JitEngine {
                 OpCode::Negate => {
                     if current_depth == 0 { bail!(); }
                     let s = current_depth - 1;
-                    if slot_types[s] != JitType::ProvenInt { ensure_raw_int!(s, ip); }
-                    let raw    = get_raw!(s);
-                    let neg    = b.ins().ineg(raw);
-                    let masked = b.ins().band(neg, c_pmask);
-                    b.def_var(vars[s], masked);
-                    var_is_raw[s]  = true;
-                    slot_types[s]  = JitType::ProvenInt;
+                    if slot_types[s] == JitType::ProvenFloat {
+                        let vi = b.use_var(vars[s]);
+                        let vf = b.ins().bitcast(types::F64, MemFlags::new(), vi);
+                        let nf = b.ins().fneg(vf);
+                        let ni = b.ins().bitcast(types::I64, MemFlags::new(), nf);
+                        b.def_var(vars[s], ni);
+                        var_is_raw[s]  = true;
+                        slot_types[s]  = JitType::ProvenFloat;
+                    } else {
+                        if slot_types[s] != JitType::ProvenInt { ensure_raw_int!(s, ip); }
+                        let raw    = get_raw!(s);
+                        let neg    = b.ins().ineg(raw);
+                        let masked = b.ins().band(neg, c_pmask);
+                        b.def_var(vars[s], masked);
+                        var_is_raw[s]  = true;
+                        slot_types[s]  = JitType::ProvenInt;
+                    }
                 }
 
                 // JumpIfFalse: PEEK — both branches carry the same depth
@@ -580,9 +633,14 @@ impl JitEngine {
                 OpCode::Return => {
                     let rv = if current_depth > 0 {
                         let s = current_depth - 1;
-                        if var_is_raw[s] {
+                        if slot_types[s] == JitType::ProvenFloat {
+                            // Float: raw f64 bits returned as-is — interpreter sees them
+                            // via Value::is_float() which checks (bits & QNAN) != QNAN
+                            b.use_var(vars[s])
+                        } else if var_is_raw[s] {
+                            // Int: re-box raw payload by OR-ing the int tag prefix
                             let v = b.use_var(vars[s]);
-                            b.ins().bor(v, c_prefix) // re-box raw int before returning
+                            b.ins().bor(v, c_prefix)
                         } else {
                             b.use_var(vars[s])
                         }
@@ -662,7 +720,9 @@ impl JitEngine {
                 match op {
                     OpCode::Constant(idx) => {
                         let raw = chunk.constants[*idx].0;
-                        let t = if Value(raw).is_int() { JitType::ProvenInt } else { JitType::Unknown };
+                        let t = if Value(raw).is_int() { JitType::ProvenInt }
+                                else if Value(raw).is_float() { JitType::ProvenFloat }
+                                else { JitType::Unknown };
                         set(&mut stype, d, t); d += 1;
                     }
                     OpCode::Null|OpCode::True|OpCode::False => { set(&mut stype, d, JitType::Unknown); d += 1; }
@@ -677,8 +737,13 @@ impl JitEngine {
                     }
                     OpCode::SetLocal(i) => {
                         let t = if d > 0 { stype.get(d-1).copied().unwrap_or(JitType::Unknown) } else { JitType::Unknown };
-                        if *i < vt.len() && vt[*i] == JitType::ProvenInt && t != JitType::ProvenInt {
-                            vt[*i] = JitType::Unknown; changed = true;
+                        if *i < vt.len() {
+                            if vt[*i] == JitType::ProvenInt && t != JitType::ProvenInt {
+                                vt[*i] = if t == JitType::ProvenFloat { JitType::ProvenFloat } else { JitType::Unknown };
+                                changed = true;
+                            } else if vt[*i] == JitType::ProvenFloat && t != JitType::ProvenFloat {
+                                vt[*i] = JitType::Unknown; changed = true;
+                            }
                         }
                         // PEEK — d unchanged
                     }
@@ -687,7 +752,11 @@ impl JitEngine {
                             let bv = stype.get(d-1).copied().unwrap_or(JitType::Unknown);
                             let av = stype.get(d-2).copied().unwrap_or(JitType::Unknown);
                             d -= 1;
-                            let r = if av == JitType::ProvenInt && bv == JitType::ProvenInt { JitType::ProvenInt } else { JitType::Unknown };
+                            let r = if av == JitType::ProvenFloat || bv == JitType::ProvenFloat {
+                                JitType::ProvenFloat
+                            } else if av == JitType::ProvenInt && bv == JitType::ProvenInt {
+                                JitType::ProvenInt
+                            } else { JitType::Unknown };
                             set(&mut stype, d-1, r);
                         }
                     }
