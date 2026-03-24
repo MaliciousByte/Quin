@@ -1,0 +1,43 @@
+use os;
+
+# Mandelbrot set — 200x200 grid, max 50 iterations per pixel
+# Exercises tight float multiply-accumulate throughput (no function calls in hot loop)
+
+task mandelbrot(size, max_iter) {
+    let total = 0;
+    let y = 0;
+    while y < size {
+        let ci = 2.0 * y / size - 1.0;
+        let x = 0;
+        while x < size {
+            let cr = 2.0 * x / size - 1.5;
+            let zr = 0.0;
+            let zi = 0.0;
+            let iter = 0;
+            while iter < max_iter {
+                let zr2 = zr * zr;
+                let zi2 = zi * zi;
+                if zr2 + zi2 > 4.0 {
+                    iter = max_iter;
+                } else {
+                    zi = 2.0 * zr * zi + ci;
+                    zr = zr2 - zi2 + cr;
+                    iter = iter + 1;
+                }
+            }
+            total = total + iter;
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+    return total;
+}
+
+# Warm up
+mandelbrot(50, 25);
+
+# Timed run
+let t1 = clock();
+let result = mandelbrot(200, 50);
+let t2 = clock();
+emit("JIT time: " + (t2 - t1) + "s");

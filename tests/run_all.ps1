@@ -7,9 +7,11 @@ if (-not (Test-Path $QuinExecutable)) {
 }
 
 $TestFiles = Get-ChildItem -Path tests -Filter *.qn -Recurse | Where-Object {
-    $_.DirectoryName -notmatch "\\benchmarks$" -and
+    $_.FullName -notmatch "benchmarks" -and
     $_.Name -notin "a.qn", "b.qn", "helpers.qn"
 }
+
+
 
 $Passed = 0
 $Failed = 0
@@ -41,78 +43,88 @@ if ($Failed -gt 0) {
 
 # ── Quin Benchmarks ──────────────────────────────────────────────────────────
 $BenchDir = "tests/benchmarks"
-$BenchFiles = @()
+$BenchDirs = @()
 if (Test-Path $BenchDir) {
-    $BenchFiles = Get-ChildItem -Path $BenchDir -Filter *.qn
+    $BenchDirs = Get-ChildItem -Path $BenchDir -Directory
 }
 
-if ($BenchFiles.Count -gt 0) {
+if ($BenchDirs.Count -gt 0) {
     Write-Host ""
     Write-Host "--- Quin Benchmarks (JIT steady-state) ---" -ForegroundColor Magenta
 
-    foreach ($bench in $BenchFiles) {
-        Write-Host "Bench: $($bench.Name)... " -NoNewline
-        $warmup = & $QuinExecutable $bench.FullName 2>&1
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $result = & $QuinExecutable $bench.FullName 2>&1
-        $sw.Stop()
-        if ($LASTEXITCODE -eq 0) {
-            $ms = $sw.Elapsed.TotalMilliseconds
-            Write-Host ("{0:F1}ms" -f $ms) -ForegroundColor Yellow
-            if ($result) { Write-Host $result -ForegroundColor DarkGray }
-        } else {
-            Write-Host "ERROR" -ForegroundColor Red
-            Write-Host $result -ForegroundColor Gray
+    foreach ($dir in $BenchDirs) {
+        $benchFiles = Get-ChildItem -Path $dir.FullName -Filter *.qn
+        foreach ($bench in $benchFiles) {
+            Write-Host "Bench: $($dir.Name)/$($bench.Name)... " -NoNewline
+            $warmup = & $QuinExecutable $bench.FullName 2>&1
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $result = & $QuinExecutable $bench.FullName 2>&1
+            $sw.Stop()
+            if ($LASTEXITCODE -eq 0) {
+                $ms = $sw.Elapsed.TotalMilliseconds
+                Write-Host ("{0:F1}ms" -f $ms) -ForegroundColor Yellow
+                if ($result) { Write-Host $result -ForegroundColor DarkGray }
+            } else {
+                Write-Host "ERROR" -ForegroundColor Red
+                Write-Host $result -ForegroundColor Gray
+            }
         }
     }
 }
 
 # ── Cross-language Comparison ────────────────────────────────────────────────
-$QuinBench  = "tests/benchmarks/tight_loop.qn"
-$PyBench    = "tests/benchmarks/tight_loop.py"
-$JSBench    = "tests/benchmarks/tight_loop.js"
-
-if ((Test-Path $QuinBench) -and ((Test-Path $PyBench) -or (Test-Path $JSBench))) {
+if ($BenchDirs.Count -gt 0) {
     Write-Host ""
-    Write-Host "--- Cross-Language Comparison: tight_loop ---" -ForegroundColor Cyan
+    Write-Host "--- Cross-Language Comparison ---" -ForegroundColor Cyan
     Write-Host "  (Quin = internal JIT clock; Python/JS = internal loop timer)" -ForegroundColor DarkGray
-    Write-Host ""
 
-    # Quin — warm up then read internal JIT time
-    $null = & $QuinExecutable $QuinBench 2>&1
-    $quinOut = (& $QuinExecutable $QuinBench 2>&1) -join "`n"
-    $quinMs = $null
-    if ($quinOut -match "JIT time:\s*([\d.]+)s") {
-        $quinMs = [double]$matches[1] * 1000
-        Write-Host ("  Quin   (JIT):  {0,8:F3}ms" -f $quinMs) -ForegroundColor Magenta
-    }
+    foreach ($dir in $BenchDirs) {
+        $benchName = $dir.Name
+        $quinBench = Get-ChildItem -Path $dir.FullName -Filter *.qn | Select-Object -First 1
+        $pyBench   = Get-ChildItem -Path $dir.FullName -Filter *.py  | Select-Object -First 1
+        $jsBench   = Get-ChildItem -Path $dir.FullName -Filter *.js  | Select-Object -First 1
 
-    # Python
-    if (Test-Path $PyBench) {
-        $pyOut = (& python $PyBench 2>&1) -join "`n"
-        if ($pyOut -match "Python Time:\s*([\d.]+)s") {
-            $pyMs = [double]$matches[1] * 1000
-            Write-Host ("  Python (loop): {0,8:F1}ms" -f $pyMs) -ForegroundColor Blue
-            if ($quinMs) {
-                $ratio = $pyMs / $quinMs
-                Write-Host ("             -> Quin is {0:F0}x faster than Python" -f $ratio) -ForegroundColor Green
+        if (-not $quinBench) { continue }
+
+        Write-Host ""
+        Write-Host "  -- $benchName --" -ForegroundColor Cyan
+
+        # Quin — warm up then read internal JIT time
+        $null = & $QuinExecutable $quinBench.FullName 2>&1
+        $quinOut = (& $QuinExecutable $quinBench.FullName 2>&1) -join "`n"
+        $quinMs = $null
+        if ($quinOut -match "JIT time:\s*([\d.]+)s") {
+            $quinMs = [double]$matches[1] * 1000
+            Write-Host ("    Quin   (JIT):  {0,8:F3}ms" -f $quinMs) -ForegroundColor Magenta
+        }
+
+        # Python
+        if ($pyBench) {
+            $pyOut = (& python $pyBench.FullName 2>&1) -join "`n"
+            if ($pyOut -match "Python Time:\s*([\d.]+)s") {
+                $pyMs = [double]$matches[1] * 1000
+                Write-Host ("    Python (loop): {0,8:F1}ms" -f $pyMs) -ForegroundColor Blue
+                if ($quinMs) {
+                    $ratio = $pyMs / $quinMs
+                    Write-Host ("               -> Quin is {0:F0}x faster than Python" -f $ratio) -ForegroundColor Green
+                }
             }
         }
-    }
 
-    # Node.js
-    if (Test-Path $JSBench) {
-        $jsOut = (& node $JSBench 2>&1) -join "`n"
-        if ($jsOut -match "JS Time:\s*([\d.]+)s") {
-            $jsMs = [double]$matches[1] * 1000
-            Write-Host ("  Node   (loop): {0,8:F1}ms" -f $jsMs) -ForegroundColor Yellow
-            if ($quinMs) {
-                if ($quinMs -le $jsMs) {
-                    $ratio = $jsMs / $quinMs
-                    Write-Host ("             -> Quin is {0:F1}x faster than Node" -f $ratio) -ForegroundColor Green
-                } else {
-                    $ratio = $quinMs / $jsMs
-                    Write-Host ("             -> Node is {0:F1}x faster than Quin" -f $ratio) -ForegroundColor DarkYellow
+        # Node.js
+        if ($jsBench) {
+            $jsOut = (& node $jsBench.FullName 2>&1) -join "`n"
+            if ($jsOut -match "JS Time:\s*([\d.]+)s") {
+                $jsMs = [double]$matches[1] * 1000
+                Write-Host ("    Node   (loop): {0,8:F1}ms" -f $jsMs) -ForegroundColor Yellow
+                if ($quinMs) {
+                    if ($quinMs -le $jsMs) {
+                        $ratio = $jsMs / $quinMs
+                        Write-Host ("               -> Quin is {0:F1}x faster than Node" -f $ratio) -ForegroundColor Green
+                    } else {
+                        $ratio = $quinMs / $jsMs
+                        Write-Host ("               -> Node is {0:F1}x faster than Quin" -f $ratio) -ForegroundColor DarkYellow
+                    }
                 }
             }
         }

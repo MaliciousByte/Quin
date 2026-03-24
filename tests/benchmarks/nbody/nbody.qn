@@ -1,0 +1,161 @@
+use os;
+use math;
+
+# N-body gravitational simulation (5 bodies, 500 000 steps)
+# Exercises float add / sub / mul / div and sqrt()
+
+let solar_mass = 4.0 * PI * PI;
+let days_per_year = 365.24;
+
+# Body: [x, y, z, vx, vy, vz, mass]
+task make_body(x, y, z, vx, vy, vz, m) {
+    return [x, y, z, vx * days_per_year, vy * days_per_year, vz * days_per_year, m * solar_mass];
+}
+
+task make_sun() {
+    return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, solar_mass];
+}
+
+task make_jupiter() {
+    return make_body(
+        4.84143144246472090,
+        -1.16032004402742839,
+        -0.103622044471123109,
+        0.00166007664274403694,
+        0.00769901118419740425,
+        -0.0000690460016972063023,
+        0.000954791938424326609
+    );
+}
+
+task make_saturn() {
+    return make_body(
+        8.34336671824457987,
+        4.12479856412430479,
+        -0.403523417114321381,
+        -0.00276742510726862411,
+        0.00499852801234917238,
+        0.0000230417297573763929,
+        0.000285885980666130812
+    );
+}
+
+task make_uranus() {
+    return make_body(
+        12.8943695621391310,
+        -15.1111514016986312,
+        -0.223307578892655734,
+        0.00296460137564761618,
+        0.00237847173959480950,
+        -0.0000296589568540237556,
+        0.0000436624404335156298
+    );
+}
+
+task make_neptune() {
+    return make_body(
+        15.3796971148509165,
+        -25.9193146099879641,
+        0.179258772950371181,
+        0.00268067772490389322,
+        0.00162824170038242295,
+        -0.0000951592254519715870,
+        0.0000515138902046611451
+    );
+}
+
+task advance(bodies, dt) {
+    let n = len(bodies);
+    let i = 0;
+    while i < n {
+        let bi = bodies[i];
+        let j = i + 1;
+        while j < n {
+            let bj = bodies[j];
+            let dx = bi[0] - bj[0];
+            let dy = bi[1] - bj[1];
+            let dz = bi[2] - bj[2];
+            let dist2 = dx * dx + dy * dy + dz * dz;
+            let dist = sqrt(dist2);
+            let mag = dt / (dist2 * dist);
+            let mj = bj[6];
+            let mi = bi[6];
+            bi[3] = bi[3] - dx * mj * mag;
+            bi[4] = bi[4] - dy * mj * mag;
+            bi[5] = bi[5] - dz * mj * mag;
+            bj[3] = bj[3] + dx * mi * mag;
+            bj[4] = bj[4] + dy * mi * mag;
+            bj[5] = bj[5] + dz * mi * mag;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        let b = bodies[i];
+        b[0] = b[0] + dt * b[3];
+        b[1] = b[1] + dt * b[4];
+        b[2] = b[2] + dt * b[5];
+        i = i + 1;
+    }
+}
+
+task energy(bodies) {
+    let n = len(bodies);
+    let e = 0.0;
+    let i = 0;
+    while i < n {
+        let bi = bodies[i];
+        e = e + 0.5 * bi[6] * (bi[3] * bi[3] + bi[4] * bi[4] + bi[5] * bi[5]);
+        let j = i + 1;
+        while j < n {
+            let bj = bodies[j];
+            let dx = bi[0] - bj[0];
+            let dy = bi[1] - bj[1];
+            let dz = bi[2] - bj[2];
+            let dist = sqrt(dx * dx + dy * dy + dz * dz);
+            e = e - bi[6] * bj[6] / dist;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return e;
+}
+
+task offset_momentum(bodies) {
+    let px = 0.0;
+    let py = 0.0;
+    let pz = 0.0;
+    let i = 0;
+    while i < len(bodies) {
+        let b = bodies[i];
+        px = px + b[3] * b[6];
+        py = py + b[4] * b[6];
+        pz = pz + b[5] * b[6];
+        i = i + 1;
+    }
+    let sun = bodies[0];
+    sun[3] = 0.0 - px / solar_mass;
+    sun[4] = 0.0 - py / solar_mass;
+    sun[5] = 0.0 - pz / solar_mass;
+}
+
+task run_nbody(n) {
+    let bodies = [make_sun(), make_jupiter(), make_saturn(), make_uranus(), make_neptune()];
+    offset_momentum(bodies);
+    let i = 0;
+    while i < n {
+        advance(bodies, 0.01);
+        i = i + 1;
+    }
+    return energy(bodies);
+}
+
+# Warm up
+run_nbody(1000);
+
+# Timed run
+let t1 = clock();
+let result = run_nbody(50000);
+let t2 = clock();
+emit("JIT time: " + (t2 - t1) + "s");
