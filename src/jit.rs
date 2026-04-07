@@ -21,7 +21,7 @@ use std::collections::HashMap;
 // This causes Cranelift to fail silently (define_function error → null_ptr),
 // so the interpreter runs instead, producing the ~1.7s result.
 //
-// QUASAR JIT — current opcode support:
+// Ame, current opcode support:
 //   integers: Constant, GetLocal, SetLocal, Add/Sub/Mul/Div, Equal/Greater/Less
 //             JumpIfFalse, Jump, Loop, Return, Negate, Not
 //   floats:   same ops with ProvenFloat — fadd/fsub/fmul/fdiv + fcmp
@@ -969,7 +969,7 @@ impl JitEngine {
                     var_is_raw[current_depth - 1]  = false;
                     slot_types[current_depth - 1]  = JitType::Unknown;
                 }
-
+/// i loved her so much but she got a boyfriend...
                 OpCode::Not => {
                     if current_depth == 0 { bail!(); }
                     let s       = current_depth - 1;
@@ -1002,7 +1002,7 @@ impl JitEngine {
                         slot_types[s]  = JitType::ProvenInt;
                     }
                 }
-
+                /// Monika
                 // JumpIfFalse: PEEK — both branches carry the same depth
                 OpCode::JumpIfFalse(offset) => {
                     if current_depth == 0 { bail!(); }
