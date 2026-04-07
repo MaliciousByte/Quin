@@ -889,6 +889,7 @@ impl VM {
         Ok(())
     }
 
+    #[inline(always)]
     fn read_instruction(&mut self) -> Result<OpCode, String> {
         let frame = self.current_frame_mut()?;
         if frame.ip >= frame.closure.function.chunk.code.len() {
@@ -899,6 +900,7 @@ impl VM {
         Ok(op)
     }
 
+    #[inline(always)]
     fn read_constant(&self, idx: usize) -> Result<Value, String> {
         let frame = self.current_frame()?;
         if idx >= frame.closure.function.chunk.constants.len() {
@@ -917,14 +919,17 @@ impl VM {
         Err("Expected string constant.".to_string())
     }
 
+    #[inline(always)]
     pub fn push(&mut self, value: Value) {
         self.stack.push(value);
     }
 
+    #[inline(always)]
     pub fn pop(&mut self) -> Result<Value, String> {
         self.stack.pop().ok_or_else(|| "Stack underflow.".to_string())
     }
 
+    #[inline(always)]
     fn peek(&self, distance: usize) -> Result<&Value, String> {
         if distance >= self.stack.len() {
             Err("Stack underflow on peek.".to_string())
@@ -1147,10 +1152,12 @@ impl VM {
         Ok(())
     }
 
+    #[inline(always)]
     fn current_frame(&self) -> Result<&CallFrame, String> {
         self.frames.last().ok_or_else(|| "No call frame.".to_string())
     }
 
+    #[inline(always)]
     fn current_frame_mut(&mut self) -> Result<&mut CallFrame, String> {
         self.frames.last_mut().ok_or_else(|| "No call frame.".to_string())
     }

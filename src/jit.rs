@@ -25,9 +25,156 @@ use std::collections::HashMap;
 //   integers: Constant, GetLocal, SetLocal, Add/Sub/Mul/Div, Equal/Greater/Less
 //             JumpIfFalse, Jump, Loop, Return, Negate, Not
 //   floats:   same ops with ProvenFloat — fadd/fsub/fmul/fdiv + fcmp
-//   other:    GetGlobal (placeholder), Call (bail — no stack materialization yet)
-//   pending:  GetProperty/SetProperty, closures, stack materialization for Call
+//   libcalls: GetIndex (array), SetIndex (array), Call(1) (native sqrt/len),
+//             GetGlobal (any global variable)
+//   pending:  GetProperty/SetProperty, closures, Call(>1)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LIBCALL HELPERS — extern "C" functions callable from JIT-compiled code
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Array get: extract element at index. arr_bits and idx_bits are NaN-boxed Values.
+/// Returns the raw u64 bits of the element Value (no refcount change — parent
+/// array keeps the element alive for the duration of the JIT frame).
+#[no_mangle]
+pub extern "C" fn quin_array_get(arr_bits: i64, idx_bits: i64) -> i64 {
+    let arr_val = Value(arr_bits as u64);
+    let idx_val = Value(idx_bits as u64);
+    let result = if arr_val.is_obj() {
+        let obj = arr_val.as_obj();
+        match &*obj {
+            crate::obj::Obj::Array(arr) => {
+                if idx_val.is_int() {
+                    let i = idx_val.as_int();
+                    let elements = arr.borrow();
+                    if i >= 0 && (i as usize) < elements.len() {
+                        // Return raw bits — no clone/refcount needed because
+                        // the parent array is alive for the entire JIT frame.
+                        let bits = elements[i as usize].0;
+                        // But we do need to increment refcount if it's an obj,
+                        // because we're creating a new reference
+                        let v = &elements[i as usize];
+                        v.mark(); // increment refcount for the returned reference
+                        bits as i64
+                    } else {
+                        // Index out of bounds — return null
+                        Value::null().0 as i64
+                    }
+                } else {
+                    Value::null().0 as i64
+                }
+            }
+            _ => Value::null().0 as i64,
+        }
+    } else {
+        Value::null().0 as i64
+    };
+    std::mem::forget(arr_val);
+    std::mem::forget(idx_val);
+    result
+}
+
+/// Array set: set element at index. Returns val_bits.
+/// arr_bits, idx_bits, val_bits are all NaN-boxed Values.
+#[no_mangle]
+pub extern "C" fn quin_array_set(arr_bits: i64, idx_bits: i64, val_bits: i64) -> i64 {
+    let arr_val = Value(arr_bits as u64);
+    let idx_val = Value(idx_bits as u64);
+    let new_val = Value(val_bits as u64);
+    if arr_val.is_obj() {
+        let obj = arr_val.as_obj();
+        match &*obj {
+            crate::obj::Obj::Array(arr) => {
+                if idx_val.is_int() {
+                    let i = idx_val.as_int();
+                    let mut elements = arr.borrow_mut();
+                    if i >= 0 && (i as usize) < elements.len() {
+                        // Clone the new value (increments refcount if obj)
+                        elements[i as usize] = new_val.clone();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let result = val_bits;
+    std::mem::forget(arr_val);
+    std::mem::forget(idx_val);
+    std::mem::forget(new_val);
+    result
+}
+
+/// Call a 1-arg native function. vm_ptr is *mut VM, fn_bits is the NaN-boxed
+/// closure/NativeFn value, arg_bits is the single argument.
+/// Returns NaN-boxed result bits.
+#[no_mangle]
+pub extern "C" fn quin_call_native_1(vm_ptr: *mut crate::vm::VM, fn_bits: i64, arg_bits: i64) -> i64 {
+    let fn_val = Value(fn_bits as u64);
+    let arg_val = Value(arg_bits as u64);
+    let result = if fn_val.is_obj() {
+        let obj = fn_val.as_obj();
+        match &*obj {
+            crate::obj::Obj::NativeFn(native) => {
+                let vm = unsafe { &mut *vm_ptr };
+                match native(vm, &[arg_val.clone()]) {
+                    Ok(v) => {
+                        let bits = v.0 as i64;
+                        std::mem::forget(v);
+                        bits
+                    }
+                    Err(_) => {
+                        let v = Value::null();
+                        let bits = v.0 as i64;
+                        std::mem::forget(v);
+                        bits
+                    }
+                }
+            }
+            _ => {
+                let v = Value::null();
+                let bits = v.0 as i64;
+                std::mem::forget(v);
+                bits
+            }
+        }
+    } else {
+        let v = Value::null();
+        let bits = v.0 as i64;
+        std::mem::forget(v);
+        bits
+    };
+    std::mem::forget(fn_val);
+    std::mem::forget(arg_val);
+    result
+}
+
+/// Get a global variable by name. vm_ptr is *mut VM, const_ptr is a pointer
+/// to the constants array, const_idx is the index of the string constant.
+/// Returns NaN-boxed bits of the global value.
+#[no_mangle]
+pub extern "C" fn quin_get_global(vm_ptr: *mut crate::vm::VM, const_ptr: *const Value, const_idx: i64) -> i64 {
+    let vm = unsafe { &mut *vm_ptr };
+    let constants = unsafe { &*std::ptr::slice_from_raw_parts(const_ptr, (const_idx as usize) + 1) };
+    let name_val = &constants[const_idx as usize];
+    if name_val.is_obj() {
+        let obj = name_val.as_obj();
+        match &*obj {
+            crate::obj::Obj::String(s) => {
+                if let Some(val) = vm.globals.get(s) {
+                    let bits = val.0 as i64;
+                    val.mark(); // increment refcount for the returned reference
+                    bits
+                } else {
+                    Value::null().0 as i64
+                }
+            }
+            _ => Value::null().0 as i64,
+        }
+    } else {
+        Value::null().0 as i64
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum JitType { Unknown, ProvenInt, ProvenFloat }
@@ -47,9 +194,15 @@ impl JitEngine {
         let isa_builder = cranelift_native::builder()
             .unwrap_or_else(|msg| panic!("host machine unsupported: {}", msg));
         let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
-        let module = JITModule::new(
-            JITBuilder::with_isa(isa, cranelift_module::default_libcall_names())
-        );
+
+        // Register libcall symbols with the JIT
+        let mut jit_builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+        jit_builder.symbol("quin_array_get", quin_array_get as *const u8);
+        jit_builder.symbol("quin_array_set", quin_array_set as *const u8);
+        jit_builder.symbol("quin_call_native_1", quin_call_native_1 as *const u8);
+        jit_builder.symbol("quin_get_global", quin_get_global as *const u8);
+
+        let module = JITModule::new(jit_builder);
         Self { ctx: codegen::Context::new(), module, fn_counter: 0 }
     }
 
@@ -62,6 +215,42 @@ impl JitEngine {
         sig.params.push(AbiParam::new(ptr_type)); // *const Value (args)
         sig.returns.push(AbiParam::new(types::I64));
         self.ctx.func.signature = sig;
+
+        // ── Declare libcall signatures ────────────────────────────────────
+        // quin_array_get(arr_bits: i64, idx_bits: i64) -> i64
+        let mut sig_array_get = self.module.make_signature();
+        sig_array_get.params.push(AbiParam::new(types::I64));
+        sig_array_get.params.push(AbiParam::new(types::I64));
+        sig_array_get.returns.push(AbiParam::new(types::I64));
+        let fn_array_get = self.module.declare_function("quin_array_get", Linkage::Import, &sig_array_get)
+            .expect("declare quin_array_get");
+
+        // quin_array_set(arr_bits: i64, idx_bits: i64, val_bits: i64) -> i64
+        let mut sig_array_set = self.module.make_signature();
+        sig_array_set.params.push(AbiParam::new(types::I64));
+        sig_array_set.params.push(AbiParam::new(types::I64));
+        sig_array_set.params.push(AbiParam::new(types::I64));
+        sig_array_set.returns.push(AbiParam::new(types::I64));
+        let fn_array_set = self.module.declare_function("quin_array_set", Linkage::Import, &sig_array_set)
+            .expect("declare quin_array_set");
+
+        // quin_call_native_1(vm: ptr, fn_bits: i64, arg_bits: i64) -> i64
+        let mut sig_call_native = self.module.make_signature();
+        sig_call_native.params.push(AbiParam::new(ptr_type));
+        sig_call_native.params.push(AbiParam::new(types::I64));
+        sig_call_native.params.push(AbiParam::new(types::I64));
+        sig_call_native.returns.push(AbiParam::new(types::I64));
+        let fn_call_native = self.module.declare_function("quin_call_native_1", Linkage::Import, &sig_call_native)
+            .expect("declare quin_call_native_1");
+
+        // quin_get_global(vm: ptr, const_ptr: ptr, const_idx: i64) -> i64
+        let mut sig_get_global = self.module.make_signature();
+        sig_get_global.params.push(AbiParam::new(ptr_type));
+        sig_get_global.params.push(AbiParam::new(ptr_type));
+        sig_get_global.params.push(AbiParam::new(types::I64));
+        sig_get_global.returns.push(AbiParam::new(types::I64));
+        let fn_get_global = self.module.declare_function("quin_get_global", Linkage::Import, &sig_get_global)
+            .expect("declare quin_get_global");
 
         // NaN boxing layout
         let qnan:         u64 = 0x7ff8000000000000;
@@ -160,10 +349,17 @@ impl JitEngine {
                         let nd = match op {
                             OpCode::Constant(_)|OpCode::Null|OpCode::True|OpCode::False
                             |OpCode::Dup|OpCode::GetLocal(_) => d + 1,
+                            OpCode::GetGlobal(_) => d + 1,
                             OpCode::SetLocal(_) => d,         // PEEK
                             OpCode::Pop         => d.saturating_sub(1),
                             OpCode::Add|OpCode::Subtract|OpCode::Multiply|OpCode::Divide
                             |OpCode::Equal|OpCode::Greater|OpCode::Less => d.saturating_sub(1),
+                            // GetIndex: pops 2 (arr, idx), pushes 1 (result) => net -1
+                            OpCode::GetIndex => d.saturating_sub(1),
+                            // SetIndex: pops 3 (arr, idx, val), pushes 1 (val) => net -2
+                            OpCode::SetIndex => d.saturating_sub(2),
+                            // Call(n): pops n+1 (fn + args), pushes 1 (result) => net -n
+                            OpCode::Call(n) => d.saturating_sub(*n as usize),
                             _ => d,
                         };
                         push(&mut ip_to_depth, &mut wl, ip+1, nd);
@@ -183,7 +379,14 @@ impl JitEngine {
 
         // ── Entry block ───────────────────────────────────────────────────────
         b.switch_to_block(real_entry);
+        let vm_ptr_val = b.block_params(real_entry)[0];
         let args_ptr = b.block_params(real_entry)[1];
+
+        // Import libcall function references
+        let fn_ref_array_get = self.module.declare_func_in_func(fn_array_get, b.func);
+        let fn_ref_array_set = self.module.declare_func_in_func(fn_array_set, b.func);
+        let fn_ref_call_native = self.module.declare_func_in_func(fn_call_native, b.func);
+        let fn_ref_get_global = self.module.declare_func_in_func(fn_get_global, b.func);
 
         // SSA vars: enough for all locals + eval-stack headroom
         let num_vars = (start_depth + function.max_locals + 64).max(128);
@@ -201,6 +404,10 @@ impl JitEngine {
         let c_pmask  = b.ins().iconst(types::I64, payload_mask as i64);
         let c_imask  = b.ins().iconst(types::I64, int_mask     as i64);
         let c_prefix = b.ins().iconst(types::I64, int_prefix   as i64);
+
+        // Precompute constants pointer for get_global libcall
+        let const_ptr_val = b.ins().iconst(ptr_type,
+            function.chunk.constants.as_ptr() as i64);
 
         // Load args (closure + function parameters) from args_ptr
         for i in 0..=function.arity {
@@ -294,6 +501,23 @@ impl JitEngine {
                     } else { v });
                 }
                 a
+            }};
+        }
+
+        // Helper: ensure a slot has its value as tagged (NaN-boxed) for libcall args
+        macro_rules! get_for_libcall {
+            ($s:expr) => {{
+                let v = b.use_var(vars[$s]);
+                if slot_types[$s] == JitType::ProvenFloat {
+                    // Float: raw bits ARE the tagged representation (no NaN-box tag)
+                    v
+                } else if var_is_raw[$s] {
+                    // ProvenInt raw payload — retag it
+                    b.ins().bor(v, c_prefix)
+                } else {
+                    // Already tagged
+                    v
+                }
             }};
         }
 
@@ -403,6 +627,7 @@ impl JitEngine {
                         var_is_raw[current_depth] = false;
                         slot_types[current_depth] = JitType::Unknown;
                     }
+                    std::mem::forget(val);
                     current_depth += 1;
                 }
 
@@ -446,22 +671,118 @@ impl JitEngine {
                     // depth unchanged (peek)
                 }
 
+                // ── GetGlobal via libcall ─────────────────────────────────────
+                OpCode::GetGlobal(idx) => {
+                    let idx_const = b.ins().iconst(types::I64, *idx as i64);
+                    let call = b.ins().call(fn_ref_get_global, &[vm_ptr_val, const_ptr_val, idx_const]);
+                    let result = b.inst_results(call)[0];
+                    b.def_var(vars[current_depth], result);
+                    var_is_raw[current_depth] = false;
+                    slot_types[current_depth] = JitType::Unknown;
+                    current_depth += 1;
+                }
+
+                // ── GetIndex via libcall ──────────────────────────────────────
+                OpCode::GetIndex => {
+                    if current_depth < 2 { bail!(); }
+                    let idx_slot = current_depth - 1;
+                    let arr_slot = current_depth - 2;
+                    let arr_tagged = get_for_libcall!(arr_slot);
+                    let idx_tagged = get_for_libcall!(idx_slot);
+                    let call = b.ins().call(fn_ref_array_get, &[arr_tagged, idx_tagged]);
+                    let result = b.inst_results(call)[0];
+                    current_depth -= 1; // net: pop 2, push 1
+                    b.def_var(vars[current_depth - 1], result);
+                    var_is_raw[current_depth - 1] = false;
+                    slot_types[current_depth - 1] = JitType::Unknown;
+                }
+
+                // ── SetIndex via libcall ──────────────────────────────────────
+                OpCode::SetIndex => {
+                    if current_depth < 3 { bail!(); }
+                    let val_slot = current_depth - 1;
+                    let idx_slot = current_depth - 2;
+                    let arr_slot = current_depth - 3;
+                    let arr_tagged = get_for_libcall!(arr_slot);
+                    let idx_tagged = get_for_libcall!(idx_slot);
+                    let val_tagged = get_for_libcall!(val_slot);
+                    let call = b.ins().call(fn_ref_array_set, &[arr_tagged, idx_tagged, val_tagged]);
+                    let result = b.inst_results(call)[0];
+                    current_depth -= 2; // net: pop 3, push 1
+                    b.def_var(vars[current_depth - 1], result);
+                    var_is_raw[current_depth - 1] = false;
+                    slot_types[current_depth - 1] = JitType::Unknown;
+                }
+
+                // ── Call(1) via native libcall (covers sqrt, len, etc.) ───────
+                OpCode::Call(arg_count) => {
+                    if *arg_count == 1 {
+                        // Call(1): fn is at current_depth-2, arg is at current_depth-1
+                        if current_depth < 2 { bail!(); }
+                        let fn_slot  = current_depth - 2;
+                        let arg_slot = current_depth - 1;
+                        let fn_tagged  = get_for_libcall!(fn_slot);
+                        let arg_tagged = get_for_libcall!(arg_slot);
+                        let call = b.ins().call(fn_ref_call_native, &[vm_ptr_val, fn_tagged, arg_tagged]);
+                        let result = b.inst_results(call)[0];
+                        current_depth -= 1; // net: pop 2 (fn+arg), push 1 (result)
+                        b.def_var(vars[current_depth - 1], result);
+                        // Result from native calls (sqrt -> float, len -> int)
+                        // We don't know statically, so mark as Unknown
+                        var_is_raw[current_depth - 1] = false;
+                        slot_types[current_depth - 1] = JitType::Unknown;
+                    } else {
+                        // Multi-arg calls or non-native — bail to interpreter
+                        bail!();
+                    }
+                }
+
                 // Arithmetic: fully unboxed for ProvenInt; bitcast path for ProvenFloat
+                // Runtime dispatch for Unknown operands (from GetIndex/Call libcalls)
                 OpCode::Add | OpCode::Subtract | OpCode::Multiply | OpCode::Divide => {
                     if current_depth < 2 { bail!(); }
                     let a  = current_depth - 2;
                     let b_ = current_depth - 1;
-                    let is_float = slot_types[a] == JitType::ProvenFloat
-                                || slot_types[b_] == JitType::ProvenFloat;
+                    let both_proven_float = slot_types[a] == JitType::ProvenFloat
+                                         && slot_types[b_] == JitType::ProvenFloat;
+                    let both_proven_int = slot_types[a] == JitType::ProvenInt
+                                       && slot_types[b_] == JitType::ProvenInt;
+                    let any_unknown = slot_types[a] == JitType::Unknown
+                                   || slot_types[b_] == JitType::Unknown;
 
-                    let (result, result_type) = if is_float {
-                        // Float path: bitcast i64→f64, compute, bitcast f64→i64
+                    let (result, result_type) = if both_proven_float {
+                        // Static float path: bitcast i64→f64, compute, bitcast f64→i64
+                        let av_i = b.use_var(vars[a]);
+                        let bv_i = b.use_var(vars[b_]);
+                        let av_f = b.ins().bitcast(types::F64, MemFlags::new(), av_i);
+                        let bv_f = b.ins().bitcast(types::F64, MemFlags::new(), bv_i);
+                        let fr = match op {
+                            OpCode::Add      => b.ins().fadd(av_f, bv_f),
+                            OpCode::Subtract => b.ins().fsub(av_f, bv_f),
+                            OpCode::Multiply => b.ins().fmul(av_f, bv_f),
+                            OpCode::Divide   => b.ins().fdiv(av_f, bv_f),
+                            _ => unreachable!(),
+                        };
+                        (b.ins().bitcast(types::I64, MemFlags::new(), fr), JitType::ProvenFloat)
+                    } else if both_proven_int {
+                        // Static integer path — zero tag overhead
+                        let av = get_raw!(a);
+                        let bv = get_raw!(b_);
+                        let r = match op {
+                            OpCode::Add      => b.ins().iadd(av, bv),
+                            OpCode::Subtract => b.ins().isub(av, bv),
+                            OpCode::Multiply => b.ins().imul(av, bv),
+                            OpCode::Divide   => b.ins().sdiv(av, bv),
+                            _ => unreachable!(),
+                        };
+                        (r, JitType::ProvenInt)
+                    } else if !any_unknown {
+                        // Static mixed: one ProvenFloat + one ProvenInt
                         let av_i = b.use_var(vars[a]);
                         let bv_i = b.use_var(vars[b_]);
                         let av_f = if slot_types[a] == JitType::ProvenFloat {
                             b.ins().bitcast(types::F64, MemFlags::new(), av_i)
                         } else {
-                            // int → float promotion
                             let raw = if var_is_raw[a] { av_i } else { b.ins().band(av_i, c_pmask) };
                             b.ins().fcvt_from_sint(types::F64, raw)
                         };
@@ -479,60 +800,162 @@ impl JitEngine {
                             _ => unreachable!(),
                         };
                         (b.ins().bitcast(types::I64, MemFlags::new(), fr), JitType::ProvenFloat)
-                    } else if slot_types[a] == JitType::ProvenInt && slot_types[b_] == JitType::ProvenInt {
-                        // Fully unboxed integer path — zero tag overhead
-                        let av = get_raw!(a);
-                        let bv = get_raw!(b_);
-                        let r = match op {
-                            OpCode::Add      => b.ins().iadd(av, bv),
-                            OpCode::Subtract => b.ins().isub(av, bv),
-                            OpCode::Multiply => b.ins().imul(av, bv),
-                            OpCode::Divide   => b.ins().sdiv(av, bv),
-                            _ => unreachable!(),
-                        };
-                        (r, JitType::ProvenInt)
                     } else {
-                        ensure_raw_int!(a,  ip);
-                        ensure_raw_int!(b_, ip);
-                        let av = get_raw!(a);
-                        let bv = get_raw!(b_);
-                        let r = match op {
-                            OpCode::Add      => b.ins().iadd(av, bv),
-                            OpCode::Subtract => b.ins().isub(av, bv),
-                            OpCode::Multiply => b.ins().imul(av, bv),
-                            OpCode::Divide   => b.ins().sdiv(av, bv),
+                        // ── Runtime dispatch: at least one Unknown operand ────
+                        // Check if either operand is a float: (bits & QNAN) != QNAN
+                        let av = b.use_var(vars[a]);
+                        let bv = b.use_var(vars[b_]);
+                        let c_qnan_val = b.ins().iconst(types::I64, qnan as i64);
+
+                        let a_and = b.ins().band(av, c_qnan_val);
+                        let a_is_float = b.ins().icmp(IntCC::NotEqual, a_and, c_qnan_val);
+                        let b_and = b.ins().band(bv, c_qnan_val);
+                        let b_is_float = b.ins().icmp(IntCC::NotEqual, b_and, c_qnan_val);
+                        let either_float = b.ins().bor(a_is_float, b_is_float);
+
+                        let float_blk = b.create_block();
+                        let int_blk = b.create_block();
+                        let merge_blk = b.create_block();
+                        b.append_block_param(merge_blk, types::I64);
+
+                        b.ins().brif(either_float, float_blk, &[], int_blk, &[]);
+
+                        // ── Float path ──
+                        b.switch_to_block(float_blk);
+                        b.seal_block(float_blk);
+                        // Convert each operand to f64 using select for Unknown types
+                        let make_f64 = |builder: &mut FunctionBuilder, sv: cranelift::prelude::Value,
+                                        st: JitType, is_raw: bool| -> cranelift::prelude::Value {
+                            if st == JitType::ProvenFloat {
+                                builder.ins().bitcast(types::F64, MemFlags::new(), sv)
+                            } else if st == JitType::ProvenInt {
+                                let raw = if is_raw { sv } else { builder.ins().band(sv, c_pmask) };
+                                builder.ins().fcvt_from_sint(types::F64, raw)
+                            } else {
+                                // Unknown: could be float or int. Use select.
+                                let sv_and = builder.ins().band(sv, c_qnan_val);
+                                let sv_is_float = builder.ins().icmp(IntCC::NotEqual, sv_and, c_qnan_val);
+                                let as_float = builder.ins().bitcast(types::F64, MemFlags::new(), sv);
+                                let raw_payload = builder.ins().band(sv, c_pmask);
+                                let as_int_f = builder.ins().fcvt_from_sint(types::F64, raw_payload);
+                                builder.ins().select(sv_is_float, as_float, as_int_f)
+                            }
+                        };
+                        let af = make_f64(&mut b, av, slot_types[a], var_is_raw[a]);
+                        let bf = make_f64(&mut b, bv, slot_types[b_], var_is_raw[b_]);
+                        let fr = match op {
+                            OpCode::Add      => b.ins().fadd(af, bf),
+                            OpCode::Subtract => b.ins().fsub(af, bf),
+                            OpCode::Multiply => b.ins().fmul(af, bf),
+                            OpCode::Divide   => b.ins().fdiv(af, bf),
                             _ => unreachable!(),
                         };
-                        (r, JitType::ProvenInt)
+                        let float_res = b.ins().bitcast(types::I64, MemFlags::new(), fr);
+                        b.ins().jump(merge_blk, &[float_res]);
+
+                        // ── Int path ──
+                        b.switch_to_block(int_blk);
+                        b.seal_block(int_blk);
+                        let a_raw = if var_is_raw[a] { av } else { b.ins().band(av, c_pmask) };
+                        let b_raw = if var_is_raw[b_] { bv } else { b.ins().band(bv, c_pmask) };
+                        let ir = match op {
+                            OpCode::Add      => b.ins().iadd(a_raw, b_raw),
+                            OpCode::Subtract => b.ins().isub(a_raw, b_raw),
+                            OpCode::Multiply => b.ins().imul(a_raw, b_raw),
+                            OpCode::Divide   => b.ins().sdiv(a_raw, b_raw),
+                            _ => unreachable!(),
+                        };
+                        let int_res = b.ins().bor(ir, c_prefix);
+                        b.ins().jump(merge_blk, &[int_res]);
+
+                        // ── Merge ──
+                        b.switch_to_block(merge_blk);
+                        b.seal_block(merge_blk);
+                        let merged = b.block_params(merge_blk)[0];
+                        (merged, JitType::Unknown)
                     };
                     current_depth -= 1;
+                    let is_raw = result_type == JitType::ProvenInt || result_type == JitType::ProvenFloat;
                     b.def_var(vars[current_depth - 1], result);
-                    var_is_raw[current_depth - 1]  = true;
-                    slot_types[current_depth - 1]  = result_type;
+                    var_is_raw[current_depth - 1] = is_raw;
+                    slot_types[current_depth - 1] = result_type;
                 }
 
                 OpCode::Equal | OpCode::Greater | OpCode::Less => {
                     if current_depth < 2 { bail!(); }
                     let a  = current_depth - 2;
                     let bx = current_depth - 1;
-                    let is_float_cmp = slot_types[a] == JitType::ProvenFloat
-                                    || slot_types[bx] == JitType::ProvenFloat;
-                    let cond = if is_float_cmp {
+                    let both_proven_float = slot_types[a] == JitType::ProvenFloat
+                                         && slot_types[bx] == JitType::ProvenFloat;
+                    let both_proven_int = slot_types[a] == JitType::ProvenInt
+                                       && slot_types[bx] == JitType::ProvenInt;
+                    let any_unknown = slot_types[a] == JitType::Unknown
+                                   || slot_types[bx] == JitType::Unknown;
+
+                    let cond = if both_proven_float {
                         let av_i = b.use_var(vars[a]);
                         let bv_i = b.use_var(vars[bx]);
                         let av_f = b.ins().bitcast(types::F64, MemFlags::new(), av_i);
                         let bv_f = b.ins().bitcast(types::F64, MemFlags::new(), bv_i);
-                        let fcc = if matches!(op, OpCode::Equal)   { FloatCC::Equal }
+                        let fcc = if matches!(op, OpCode::Equal) { FloatCC::Equal }
                                   else if matches!(op, OpCode::Greater) { FloatCC::GreaterThan }
                                   else { FloatCC::LessThan };
                         b.ins().fcmp(fcc, av_f, bv_f)
-                    } else if matches!(op, OpCode::Equal) {
-                        if slot_types[a] == JitType::ProvenInt && slot_types[bx] == JitType::ProvenInt {
-                            let av = get_raw!(a); let bv = get_raw!(bx); b.ins().icmp(IntCC::Equal, av, bv)
-                        } else {
-                            let av = get_tagged!(a); let bv = get_tagged!(bx); b.ins().icmp(IntCC::Equal, av, bv)
-                        }
+                    } else if both_proven_int {
+                        let av = get_raw!(a); let bv = get_raw!(bx);
+                        let cc = if matches!(op, OpCode::Equal) { IntCC::Equal }
+                                 else if matches!(op, OpCode::Greater) { IntCC::SignedGreaterThan }
+                                 else { IntCC::SignedLessThan };
+                        b.ins().icmp(cc, av, bv)
+                    } else if matches!(op, OpCode::Equal) && !any_unknown {
+                        let av = get_tagged!(a); let bv = get_tagged!(bx);
+                        b.ins().icmp(IntCC::Equal, av, bv)
+                    } else if any_unknown {
+                        // Runtime dispatch for Unknown comparison operands
+                        let av = b.use_var(vars[a]);
+                        let bv = b.use_var(vars[bx]);
+                        let c_qnan_val = b.ins().iconst(types::I64, qnan as i64);
+                        let a_and = b.ins().band(av, c_qnan_val);
+                        let a_is_float = b.ins().icmp(IntCC::NotEqual, a_and, c_qnan_val);
+                        let b_and = b.ins().band(bv, c_qnan_val);
+                        let b_is_float = b.ins().icmp(IntCC::NotEqual, b_and, c_qnan_val);
+                        let either_float = b.ins().bor(a_is_float, b_is_float);
+
+                        let float_cmp_blk = b.create_block();
+                        let int_cmp_blk = b.create_block();
+                        let cmp_merge_blk = b.create_block();
+                        b.append_block_param(cmp_merge_blk, types::I8);
+
+                        b.ins().brif(either_float, float_cmp_blk, &[], int_cmp_blk, &[]);
+
+                        // Float comparison
+                        b.switch_to_block(float_cmp_blk);
+                        b.seal_block(float_cmp_blk);
+                        let af = b.ins().bitcast(types::F64, MemFlags::new(), av);
+                        let bf = b.ins().bitcast(types::F64, MemFlags::new(), bv);
+                        let fcc = if matches!(op, OpCode::Equal) { FloatCC::Equal }
+                                  else if matches!(op, OpCode::Greater) { FloatCC::GreaterThan }
+                                  else { FloatCC::LessThan };
+                        let fcond = b.ins().fcmp(fcc, af, bf);
+                        b.ins().jump(cmp_merge_blk, &[fcond]);
+
+                        // Int comparison
+                        b.switch_to_block(int_cmp_blk);
+                        b.seal_block(int_cmp_blk);
+                        let a_raw = b.ins().band(av, c_pmask);
+                        let b_raw = b.ins().band(bv, c_pmask);
+                        let icc = if matches!(op, OpCode::Equal) { IntCC::Equal }
+                                  else if matches!(op, OpCode::Greater) { IntCC::SignedGreaterThan }
+                                  else { IntCC::SignedLessThan };
+                        let icond = b.ins().icmp(icc, a_raw, b_raw);
+                        b.ins().jump(cmp_merge_blk, &[icond]);
+
+                        // Merge
+                        b.switch_to_block(cmp_merge_blk);
+                        b.seal_block(cmp_merge_blk);
+                        b.block_params(cmp_merge_blk)[0]
                     } else {
+                        // Mixed proven types, non-equal comparison
                         ensure_raw_int!(a,  ip);
                         ensure_raw_int!(bx, ip);
                         let cc = if matches!(op, OpCode::Greater) { IntCC::SignedGreaterThan }
@@ -541,8 +964,6 @@ impl JitEngine {
                     };
                     last_cmp = Some(cond);
                     is_cmp   = true;
-                    // FIX: store c_null as placeholder — JumpIfFalse uses cond directly
-                    // (no select overhead, no bool object materialization)
                     current_depth -= 1;
                     b.def_var(vars[current_depth - 1], c_null);
                     var_is_raw[current_depth - 1]  = false;
@@ -650,20 +1071,6 @@ impl JitEngine {
                     b.ins().return_(&[rv]);
                     block_terminated = true;
                 }
-                OpCode::GetGlobal(_) => {
-                    // Push Unknown placeholder — globals resolved by interpreter
-                    b.def_var(vars[current_depth], c_null);
-                    var_is_raw[current_depth] = false;
-                    slot_types[current_depth] = JitType::Unknown;
-                    current_depth += 1;
-                }
-
-                OpCode::Call(_) => {
-                    // bail — SSA vars not materialized to stack yet
-                    // any function with a Call runs fully interpreted
-                    // TODO: stack materialization → recursive JIT
-                    bail!();
-                }
 
                 _ => bail!(), // unsupported opcode — fall back to interpreter
             }
@@ -766,6 +1173,17 @@ impl JitEngine {
                     OpCode::Not|OpCode::Negate => { if d > 0 { set(&mut stype, d-1, JitType::Unknown); } }
                     OpCode::JumpIfFalse(_) => {} // PEEK — no change
                     OpCode::Return => { d = start_depth; }
+                    // GetGlobal: pushes Unknown (could be anything)
+                    OpCode::GetGlobal(_) => { set(&mut stype, d, JitType::Unknown); d += 1; }
+                    // GetIndex: pops 2, pushes 1 Unknown
+                    OpCode::GetIndex => { if d >= 2 { d -= 1; set(&mut stype, d-1, JitType::Unknown); } }
+                    // SetIndex: pops 3, pushes 1 Unknown
+                    OpCode::SetIndex => { if d >= 3 { d -= 2; set(&mut stype, d-1, JitType::Unknown); } }
+                    // Call(n): pops n+1, pushes 1 Unknown
+                    OpCode::Call(n) => {
+                        let n_args = *n as usize;
+                        if d >= n_args + 1 { d -= n_args; set(&mut stype, d-1, JitType::Unknown); }
+                    }
                     _ => {}
                 }
             }

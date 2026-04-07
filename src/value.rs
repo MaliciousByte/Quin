@@ -17,39 +17,55 @@ const TAG_INT: u64 = 0x0004000000000000;
 const TAG_DEOPT: u64 = 0x0007000000000000;
 
 impl Value {
+    #[inline(always)]
     pub fn null() -> Self { Value(QNAN | TAG_NULL) }
+    #[inline(always)]
     pub fn bool(b: bool) -> Self {
         if b { Value(QNAN | TAG_TRUE) }
         else { Value(QNAN | TAG_FALSE) }
     }
+    #[inline(always)]
     pub fn float(f: f64) -> Self {
         Value(f.to_bits())
     }
+    #[inline(always)]
     pub fn int(i: i64) -> Self {
         Value(QNAN | TAG_INT | (i as u64 & 0x0000FFFFFFFFFFFF))
     }
+    #[inline(always)]
     pub fn obj(obj: Arc<Obj>) -> Self {
         let ptr = Arc::into_raw(obj) as u64;
         Value(SIGN_BIT | QNAN | ptr)
     }
 
+    #[inline(always)]
     pub fn is_float(&self) -> bool { (self.0 & QNAN) != QNAN }
+    #[inline(always)]
     pub fn is_null(&self) -> bool { self.0 == (QNAN | TAG_NULL) }
+    #[inline(always)]
     pub fn is_bool(&self) -> bool { self.0 == (QNAN | TAG_FALSE) || self.0 == (QNAN | TAG_TRUE) }
+    #[inline(always)]
     pub fn is_int(&self) -> bool { (self.0 & 0xFFFF000000000000) == (QNAN | TAG_INT) }
+    #[inline(always)]
     pub fn is_obj(&self) -> bool { (self.0 & (SIGN_BIT | QNAN)) == (SIGN_BIT | QNAN) }
+    #[inline(always)]
     pub fn is_deopt(&self) -> bool { (self.0 & 0xFFFF000000000000) == (QNAN | TAG_DEOPT) }
 
+    #[inline(always)]
     pub fn deopt(ip: usize) -> Self {
         Value(QNAN | TAG_DEOPT | (ip as u64 & 0x0000FFFFFFFFFFFF))
     }
 
+    #[inline(always)]
     pub fn as_deopt(&self) -> usize {
         (self.0 & 0x0000FFFFFFFFFFFF) as usize
     }
 
+    #[inline(always)]
     pub fn as_float(&self) -> f64 { f64::from_bits(self.0) }
+    #[inline(always)]
     pub fn as_bool(&self) -> bool { self.0 == (QNAN | TAG_TRUE) }
+    #[inline(always)]
     pub fn as_int(&self) -> i64 {
         let bits = self.0 & 0x0000FFFFFFFFFFFF;
         // Sign extend from 48 bits if necessary.
@@ -59,6 +75,7 @@ impl Value {
             bits as i64
         }
     }
+    #[inline(always)]
     pub fn as_obj(&self) -> Arc<Obj> {
         let ptr = (self.0 & ! (SIGN_BIT | QNAN)) as *const Obj;
         unsafe { 
@@ -70,6 +87,7 @@ impl Value {
     }
 
     // Manual reference counting for common operations
+    #[inline(always)]
     pub fn mark(&self) {
         if self.is_obj() {
             let ptr = (self.0 & ! (SIGN_BIT | QNAN)) as *const Obj;
@@ -77,6 +95,7 @@ impl Value {
         }
     }
 
+    #[inline(always)]
     pub fn unmark(&self) {
         if self.is_obj() {
             let ptr = (self.0 & ! (SIGN_BIT | QNAN)) as *const Obj;
@@ -92,15 +111,25 @@ impl Value {
 // Let's remove Copy and implement Clone and Drop.
 
 impl Clone for Value {
+    #[inline(always)]
     fn clone(&self) -> Self {
-        self.mark();
+        // Fast path: only obj values (top 2 bits = 11) need refcount
+        if (self.0 & (SIGN_BIT | QNAN)) == (SIGN_BIT | QNAN) {
+            let ptr = (self.0 & !(SIGN_BIT | QNAN)) as *const Obj;
+            unsafe { Arc::increment_strong_count(ptr); }
+        }
         Value(self.0)
     }
 }
 
 impl Drop for Value {
+    #[inline(always)]
     fn drop(&mut self) {
-        self.unmark();
+        // Fast path: only obj values (top 2 bits = 11) need refcount
+        if (self.0 & (SIGN_BIT | QNAN)) == (SIGN_BIT | QNAN) {
+            let ptr = (self.0 & !(SIGN_BIT | QNAN)) as *const Obj;
+            unsafe { Arc::decrement_strong_count(ptr); }
+        }
     }
 }
 
