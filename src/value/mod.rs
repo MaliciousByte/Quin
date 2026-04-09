@@ -21,13 +21,13 @@ use crate::obj::Obj;
 //   obj:    SIGN_BIT | QNAN | (pointer)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const QNAN: u64 = 0x7ff8000000000000;
-const SIGN_BIT: u64 = 0x8000000000000000;
-const TAG_NULL: u64 = 0x0001000000000000;
-const TAG_FALSE: u64 = 0x0002000000000000;
-const TAG_TRUE: u64 = 0x0003000000000000;
-const TAG_INT: u64 = 0x0004000000000000;
-const TAG_DEOPT: u64 = 0x0007000000000000;
+pub(crate) const QNAN: u64 = 0x7ff8000000000000;
+pub(crate) const SIGN_BIT: u64 = 0x8000000000000000;
+pub(crate) const TAG_NULL: u64 = 0x0001000000000000;
+pub(crate) const TAG_FALSE: u64 = 0x0002000000000000;
+pub(crate) const TAG_TRUE: u64 = 0x0003000000000000;
+pub(crate) const TAG_INT: u64 = 0x0004000000000000;
+pub(crate) const TAG_DEOPT: u64 = 0x0007000000000000;
 
 #[repr(transparent)]
 pub struct Value(pub u64);

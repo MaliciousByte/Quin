@@ -10,4 +10,4 @@ res = fib(35)
 t1 = time.time()
 
 print(res)
-print("Time: " + str(t1 - t0) + "s")
+print("Python Time: " + str(t1 - t0) + "s")

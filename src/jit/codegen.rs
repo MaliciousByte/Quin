@@ -606,6 +606,20 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
                     let b_is_float = b.ins().icmp(IntCC::NotEqual, b_and, c_qnan_val);
                     let either_float = b.ins().bor(a_is_float, b_is_float);
 
+                    let c_obj_mask = b.ins().iconst(types::I64, (crate::value::SIGN_BIT | crate::value::QNAN) as i64);
+                    let a_obj_bits = b.ins().band(av, c_obj_mask);
+                    let a_is_obj   = b.ins().icmp(IntCC::Equal, a_obj_bits, c_obj_mask);
+                    let b_obj_bits = b.ins().band(bv, c_obj_mask);
+                    let b_is_obj   = b.ins().icmp(IntCC::Equal, b_obj_bits, c_obj_mask);
+                    let any_obj    = b.ins().bor(a_is_obj, b_is_obj);
+                    let obj_check_blk = b.create_block();
+                    let num_check_blk = b.create_block();
+                    b.ins().brif(any_obj, obj_check_blk, &[], num_check_blk, &[]);
+                    b.switch_to_block(obj_check_blk); deopt_ret!(ip);
+                    b.seal_block(obj_check_blk);
+                    b.switch_to_block(num_check_blk);
+                    b.seal_block(num_check_blk);
+
                     let float_blk = b.create_block();
                     let int_blk = b.create_block();
                     let merge_blk = b.create_block();
@@ -719,20 +733,38 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
 
                     b.ins().brif(either_float, float_cmp_blk, &[], int_cmp_blk, &[]);
 
+                    // ── Float path ──
                     b.switch_to_block(float_cmp_blk);
                     b.seal_block(float_cmp_blk);
-                    let af = b.ins().bitcast(types::F64, MemFlags::new(), av);
-                    let bf = b.ins().bitcast(types::F64, MemFlags::new(), bv);
+                    let make_f64 = |builder: &mut FunctionBuilder, sv: cranelift::prelude::Value,
+                                    st: JitType, is_raw: bool| -> cranelift::prelude::Value {
+                        if st == JitType::ProvenFloat {
+                            builder.ins().bitcast(types::F64, MemFlags::new(), sv)
+                        } else if st == JitType::ProvenInt {
+                            let raw = if is_raw { sv } else { builder.ins().band(sv, c_pmask) };
+                            builder.ins().fcvt_from_sint(types::F64, raw)
+                        } else {
+                            let sv_and = builder.ins().band(sv, c_qnan_val);
+                            let sv_is_float = builder.ins().icmp(IntCC::NotEqual, sv_and, c_qnan_val);
+                            let as_float = builder.ins().bitcast(types::F64, MemFlags::new(), sv);
+                            let raw_payload = builder.ins().band(sv, c_pmask);
+                            let as_int_f = builder.ins().fcvt_from_sint(types::F64, raw_payload);
+                            builder.ins().select(sv_is_float, as_float, as_int_f)
+                        }
+                    };
+                    let af = make_f64(&mut b, av, slot_types[a], var_is_raw[a]);
+                    let bf = make_f64(&mut b, bv, slot_types[bx], var_is_raw[bx]);
                     let fcc = if matches!(op, OpCode::Equal) { FloatCC::Equal }
                               else if matches!(op, OpCode::Greater) { FloatCC::GreaterThan }
                               else { FloatCC::LessThan };
                     let fcond = b.ins().fcmp(fcc, af, bf);
                     b.ins().jump(cmp_merge_blk, &[fcond]);
 
+                    // ── Int path ──
                     b.switch_to_block(int_cmp_blk);
                     b.seal_block(int_cmp_blk);
-                    let a_raw = b.ins().band(av, c_pmask);
-                    let b_raw = b.ins().band(bv, c_pmask);
+                    let a_raw = if var_is_raw[a] { av } else { b.ins().band(av, c_pmask) };
+                    let b_raw = if var_is_raw[bx] { bv } else { b.ins().band(bv, c_pmask) };
                     let icc = if matches!(op, OpCode::Equal) { IntCC::Equal }
                               else if matches!(op, OpCode::Greater) { IntCC::SignedGreaterThan }
                               else { IntCC::SignedLessThan };

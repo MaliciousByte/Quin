@@ -182,7 +182,7 @@ impl VM {
                     let closure = self.current_frame()?.closure.clone();
                     let native_ptr = self.jit_engine.compile(&closure.function);
 
-                    if !native_ptr.is_null() {
+                    if !native_ptr.is_null() && self.jit_recursion_depth < 1 {
                         closure.function.native_ptr.store(
                             native_ptr as *mut u8,
                             std::sync::atomic::Ordering::Relaxed,
@@ -202,7 +202,9 @@ impl VM {
                         let native_fn: extern "C" fn(*mut VM, *const Value) -> Value =
                             unsafe { std::mem::transmute(native_ptr) };
                         let args_ptr = unsafe { self.stack.as_ptr().add(stack_offset) };
+                        self.jit_recursion_depth += 1;
                         let result = native_fn(self as *mut VM, args_ptr);
+                        self.jit_recursion_depth -= 1;
 
                         if result.is_deopt() {
                             // Type guard failed — resume interpreter at deopt IP

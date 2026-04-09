@@ -41,6 +41,7 @@ pub struct VM {
     pub interner: StringInterner,
     pub module_states: HashMap<Arc<str>, ModuleState>,
     pub script_dir: Option<PathBuf>,
+    pub(crate) jit_recursion_depth: usize,
 }
 
 impl VM {
@@ -57,6 +58,7 @@ impl VM {
             interner: StringInterner::new(),
             module_states: HashMap::new(),
             script_dir: None,
+            jit_recursion_depth: 0,
         };
 
         // Register core standard library globals

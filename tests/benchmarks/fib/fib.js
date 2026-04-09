@@ -8,4 +8,4 @@ let res = fib(35);
 let t1 = performance.now();
 
 console.log(res);
-console.log("Time: " + ((t1 - t0) / 1000) + "s");
+console.log("JS Time: " + ((t1 - t0) / 1000) + "s");

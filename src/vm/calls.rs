@@ -100,7 +100,7 @@ impl VM {
         }
 
         let native_ptr = closure.function.native_ptr.load(std::sync::atomic::Ordering::Relaxed);
-        if !native_ptr.is_null() {
+        if !native_ptr.is_null() && self.jit_recursion_depth < 1 {
              let native_fn: extern "C" fn(*mut VM, *const Value) -> Value = unsafe { std::mem::transmute(native_ptr) };
              let stack_offset = self.stack.len() - arg_count as usize - 1;
              
@@ -110,7 +110,9 @@ impl VM {
              }
              
              let args_ptr = unsafe { self.stack.as_ptr().add(stack_offset) };
+             self.jit_recursion_depth += 1;
              let result = native_fn(self as *mut VM, args_ptr);
+             self.jit_recursion_depth -= 1;
              
              if result.is_deopt() {
                  // Type guard failed — resume interpreter at deopt IP.

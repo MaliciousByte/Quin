@@ -10,4 +10,4 @@ let res = fib(35);
 let t1 = clock();
 
 emit(res);
-emit("Time: " + (t1 - t0) + "s");
+emit("JIT time: " + (t1 - t0) + "s");

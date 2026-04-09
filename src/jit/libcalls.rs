@@ -95,6 +95,30 @@ pub extern "C" fn quin_call_native_1(vm_ptr: *mut crate::vm::VM, fn_bits: i64, a
                     }
                 }
             }
+            crate::obj::Obj::Closure(closure) => {
+                let vm = unsafe { &mut *vm_ptr };
+                let closure = closure.clone();
+                let starting_frames = vm.frames.len();
+                match vm.call_closure(closure, 1) {
+                    Ok(_) => {
+                        if vm.frames.len() > starting_frames {
+                            if let Err(_) = vm.run() {
+                                return Value::null().0 as i64;
+                            }
+                        }
+                        let v = vm.pop().unwrap_or(Value::null());
+                        let bits = v.0 as i64;
+                        std::mem::forget(v);
+                        bits
+                    }
+                    Err(_) => {
+                        let v = Value::null();
+                        let bits = v.0 as i64;
+                        std::mem::forget(v);
+                        bits
+                    }
+                }
+            }
             _ => {
                 let v = Value::null();
                 let bits = v.0 as i64;
