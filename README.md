@@ -1,75 +1,58 @@
 # 🌌 Quin
 
-Quin is a dynamically typed programming language built on a custom bytecode VM written in Rust. It interprets code immediately and compiles hot functions to native machine code at runtime via a Cranelift JIT compiler.
+Quin is a fast, hybrid-typed programming language built on a custom, language-aware execution engine written in Rust. 
 
 > *Fast enough to matter. Simple enough to enjoy. Clean enough to last.*
 
 ---
 
-## Why Quin
+## Overview
 
-Every major dynamic language carries decades of decisions made before modern hardware existed.
+Modern hardware demands performance, yet legacy languages are often constrained by decades-old architectural choices. Quin is designed for the modern era—providing the flexibility of a hybrid-typed language with execution speeds that rival production-grade virtual machines.
 
-~~Python's GIL was added in 1992 — before multi-core CPUs were standard. One lock, one core, always.~~ JavaScript was written in 10 days in 1995 for a browser. Its single-threaded event loop is a fundamental constraint, not a bug to be fixed. Both languages have grown enormous ecosystems around these limitations, making them impossible to remove without breaking everything.
+By shedding the legacy constraints of global interpreter locks (GIL) and single-threaded event loops, Quin implements the same cutting-edge optimization techniques found in engines like V8—including NaN Boxing, Hidden Classes, and Inline Caching—but built securely and safely in Rust.
 
-Quin starts in 2026 with full knowledge of what those decisions cost. No GIL. No event loop. No 30-year-old design choices baked into the foundation. A clean VM built on Rust, using the same optimization techniques as V8 — NaN Boxing, Hidden Classes, Inline Caching, JIT compilation — but without the legacy that makes V8 so difficult to change.
+## Core Features
 
-It is not finished. But the foundation is being built correctly.
-
----
-
-## What Quin Is
-
-Quin is a **work-in-progress language** with a production-grade VM core. The runtime is built from scratch in Rust with four optimization techniques working together:
-
-- **NaN Boxing** — every value (int, float, bool, null, object pointer) packed into 8 bytes
-- **Hidden Classes (Shapes)** — property access via direct memory offset, not hash lookup
-- **Inline Caching** — repeated property reads reduced to a single pointer comparison
-- **Cranelift JIT** — functions called 1000+ times compiled to native machine code
-
-These are the same techniques used in V8 (JavaScript). Quin implements all four in a clean-slate Rust VM with no garbage collector and no legacy constraints.
+- **NaN Boxing:** Every value (integers, floats, booleans, null, and object pointers) is elegantly packed into a unified 8-byte representation.
+- **Hidden Classes (Shapes):** Property access is optimized via direct memory offsets rather than expensive hash table lookups.
+- **Inline Caching:** Repeated property reads and global accesses are seamlessly reduced to lightning-fast pointer comparisons.
+- **Just-In-Time (JIT) Compilation:** Frequently executed "hot" paths are dynamically compiled to highly optimized native machine code using Cranelift.
+- **Duality of Types:** Supports both inferred types and explicit annotations seamlessly within the same context, generating zero-guard native code when types are statically known.
+- **Memory Efficiency:** No garbage collector, no stop-the-world pauses. Predictable memory management via scoped allocation, stack primitives, and safe Atomic Reference Counting.
 
 ---
 
-## Performance
+## Architecture Design: Hotaru
 
-On integer loop benchmarks with JIT warmed, Quin matches V8 (Node.js):
+Hotaru is Quin's language-aware runtime, designed to bridge high-level flexibility and native performance.
 
-| Benchmark | Python (CPython) | Node.js (V8) | Quin JIT |
-|-----------|-----------------|--------------|----------|
-| 10M integer loop | ~460ms | ~9ms | ~7ms |
+### Tiered Execution
+Every piece of code enters a unified pipeline: source → AST → register-based bytecode.
+- **Hotaru Core:** A baseline interpreter using direct-threaded dispatch. It employs **bytecode specialization**, rewriting instructions in place (e.g., `ADD` → `ADD_INT`) based on observed runtime types.
+- **The JIT Compiler:** Hot paths are lifted into native machine code via Cranelift. Profiling data is persisted to `.hotaru` files, eliminating warm-up periods on subsequent runs.
 
-Quin is **~65x faster than CPython** and **on par with V8** for this workload. JIT coverage is expanding — property access, floats, and closures are next.
+### Memory Management
+Quin uses a GC-free model to ensure zero stop-the-world pauses:
+1. **Stack/Arena:** Primitives and scoped objects are allocated and freed instantly.
+2. **ARC:** Only escaping objects use Atomic Reference Counting with a lightweight cycle detector.
 
 ---
 
-## Current State
+## Hybrid Typing & Pipeline Duality
 
-Quin is at an **early but functional stage**. The VM is correct, the test suite passes, and the core optimizations are implemented. On integer-heavy workloads the JIT matches Node.js (V8) performance. General benchmark parity is in progress as JIT coverage expands.
+Quin allows annotated and inferred types to coexist seamlessly. This duality is a first-class feature of the engine:
 
-**What works today:**
+```quin
+let x = 5        // inferred → specialization handles it
+let y: int = 5   // annotated → JIT is fully trusted with zero guards
+```
 
-- Full bytecode compiler (lexer → parser → AST → bytecode)
-- Interpreter with NaN-boxed value stack
-- Hidden Classes and Inline Caching for object property access
-- JIT compilation via Cranelift — integer arithmetic, control flow, all local variables
-- Deoptimization — JIT bails back to interpreter cleanly on type mismatches
-- OSR (On-Stack Replacement) — hot loops switch to native code mid-execution
-- String interning via `StringInterner`
-- Module system — `use math;` and `use { sqrt } from math;`
-- Circular import detection and protection
-- Full OOP — classes, inheritance, structs, closures
-- Standard library — math, string, array, io, os modules
-- Interactive REPL
-- VS Code / VSCodium syntax highlighting
+- **The Smart Lane (Inferred):** Hotaru Core observes types at runtime and specializes instructions natively.
+- **The Fast Lane (Annotated):** The JIT reads compile-time metadata and generates native code without speculative guards or checking overhead.
 
-**What is in progress:**
+This dual-path optimization allows Quin to take the "fast lane" whenever types are known and the "smart lane" when they aren't—all within the same program.
 
-- JIT property access (hot `obj.name` reads still interpreted)
-- Type feedback vectors (needed for speculative compilation)
-- True parallelism (Arc migration done, parallel runtime not yet built)
-- Async / await runtime
-- Package manager (Quill)
 
 ---
 
@@ -87,45 +70,6 @@ cargo build --release
 emit("Hello, World!");
 ```
 
-**Functions:**
-```quin
-task fib(n) {
-    if n < 2 { return n; }
-    return fib(n - 1) + fib(n - 2);
-}
-
-emit(fib(10));
-```
-
-**Modules:**
-```quin
-use math;
-use { map, filter } from array;
-
-let nums = [1, 2, 3, 4, 5];
-let squares = map(nums, task(x) => x * x);
-emit(squares);
-```
-
----
-
-## VM Architecture
-
-Quin's execution pipeline:
-
-```
-Source
-  → Lexer       (text → tokens)
-  → Parser      (tokens → AST)
-  → Compiler    (AST → bytecode chunks)
-  → Interpreter (bytecode → execution)
-  → Profiler    (counts calls silently)
-  → JIT         (hot functions → native code via Cranelift)
-  → Deopt       (type mismatch → back to interpreter at exact IP)
-```
-
-**Memory model:** No garbage collector. Reference counting via Rust's `Arc<T>`. Memory freed the instant the last reference drops. No stop-the-world pauses.
-
 ---
 
 ## Editor Support
@@ -136,52 +80,6 @@ Features: keyword highlighting, string and number literals, function and type na
 
 ---
 
-## Roadmap
-
-- [x] Bytecode VM
-- [x] NaN Boxing
-- [x] Hidden Classes and Inline Caching
-- [x] String Interning
-- [x] Closures and Upvalues
-- [x] Class and Inheritance System
-- [x] Cranelift JIT (integer arithmetic, control flow, all locals)
-- [x] Deoptimization
-- [x] OSR — On-Stack Replacement
-- [x] Module System with circular import protection
-- [x] Standard Library (math, string, array, io, os)
-- [x] Interactive REPL
-- [x] VS Code / VSCodium syntax highlighting
-- [ ] JIT — property access
-- [ ] JIT — type feedback and speculation
-- [ ] True parallelism (Arc foundation ready)
-- [ ] Async / await runtime
-- [ ] Package manager (Quill)
-- [ ] Language server (LSP)
-- [ ] Static type checker (optional)
-
----
-
-## Contributing
-
-Quin is early stage and every contribution matters. The codebase is intentionally readable — if you know Rust and are interested in compilers, VMs, or language design, there is meaningful work to do at every level.
-
-**Good first areas:**
-
-- Expanding JIT opcode coverage in `jit.rs`
-- Adding stdlib functions to existing modules
-- Writing `.qn` test cases that expose edge cases
-- Documentation improvements
-
-**Before contributing:**
-
-1. Read through `value.rs`, `vm.rs`, and `jit.rs` to understand the core architecture
-2. Run the test suite — `cargo build --release` then `.\tests\run_all.ps1`
-3. Open an issue before starting large changes so effort isn't duplicated
-
-All contributions must pass the full test suite with zero compiler warnings on release build.
-
----
-
 ## Building from Source
 
 Requirements: Rust toolchain (stable)
@@ -189,7 +87,6 @@ Requirements: Rust toolchain (stable)
 ```bash
 cargo build --release
 ```
-
 Binary at `target/release/quin` (Linux/macOS) or `target/release/quin.exe` (Windows).
 
 ---

@@ -2,207 +2,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::cell::RefCell;
 use crate::chunk::OpCode;
-use crate::value::{Value, Function, InstanceValue};
+use crate::value::{Value, Closure};
 use crate::obj::Obj;
-use crate::jit::JitEngine;
-use crate::interner::StringInterner;
-use std::path::{Path, PathBuf};
-use std::fs;
-
-pub enum ModuleState {
-    Loading,
-    Loaded,
-}
-
-const STACK_MAX: usize = 256;
-
-// Use Closure from value.rs
-
-struct CallFrame {
-    closure: Arc<crate::value::Closure>,
-    ip: usize,
-    stack_offset: usize,
-}
-
-struct ExceptionHandler {
-    frame_idx: usize,
-    stack_idx: usize,
-    catch_ip: usize,
-}
-
-pub struct VM {
-    frames: Vec<CallFrame>,
-    stack: Vec<Value>,
-    pub globals: HashMap<Arc<str>, Value>,
-    handlers: Vec<ExceptionHandler>,
-    open_upvalues: Vec<Arc<RefCell<crate::value::Upvalue>>>,
-    root_shape: Arc<crate::value::Shape>,
-    next_shape_id: usize,
-    pub jit_engine: JitEngine,
-    pub interner: StringInterner,
-    pub module_states: HashMap<Arc<str>, ModuleState>,
-    pub script_dir: Option<PathBuf>,
-}
+use super::{VM, CallFrame};
 
 impl VM {
-    pub fn new() -> Self {
-        let mut vm = VM {
-            frames: Vec::new(),
-            stack: Vec::with_capacity(STACK_MAX),
-            globals: HashMap::new(),
-            handlers: Vec::new(),
-            open_upvalues: Vec::new(),
-            root_shape: Arc::new(crate::value::Shape::new(0)),
-            next_shape_id: 1,
-            jit_engine: JitEngine::new(),
-            interner: StringInterner::new(),
-            module_states: HashMap::new(),
-            script_dir: None,
-        };
-
-        // Register core standard library globals
-        crate::stdlib::register_core(&mut vm);
-        
-        vm
-    }
-
-    pub fn intern(&mut self, s: &str) -> Arc<str> {
-        self.interner.intern(s)
-    }
-
-    pub fn set_script_dir(&mut self, path: &str) {
-        if let Some(parent) = Path::new(path).parent() {
-            self.script_dir = Some(parent.to_path_buf());
-        }
-    }
-
-    pub fn load_module(&mut self, name: Arc<str>, _selective_items: &[Arc<str>]) -> Result<(), String> {
-        if let Some(state) = self.module_states.get(&name) {
-            match state {
-                ModuleState::Loaded => return Ok(()),
-                ModuleState::Loading => return Err(format!("Circular import detected: module '{}' is already being loaded", name)),
-            }
-        }
-
-        self.module_states.insert(name.clone(), ModuleState::Loading);
-
-        let is_stdlib = crate::stdlib::load_module(self, &name);
-        
-        if !is_stdlib {
-            // File import
-            let ext = if name.ends_with(".qn") { "" } else { ".qn" };
-            let filename = format!("{}{}", name, ext);
-            
-            let path = if let Some(dir) = &self.script_dir {
-                dir.join(&filename)
-            } else {
-                PathBuf::from(&filename)
-            };
-
-            let source = fs::read_to_string(&path)
-                .map_err(|e| format!("Could not load module '{}' at {}: {}", name, path.display(), e))?;
-
-            let mut lexer = crate::lexer::Lexer::new(&source);
-            let tokens = lexer.scan_tokens().map_err(|e| format!("Lexer error in module '{}': {}", name, e))?;
-
-            let mut parser = crate::parser::Parser::new(tokens);
-            let ast = parser.parse().map_err(|e| format!("Parser error in module '{}': {}", name, e))?;
-
-            let path_str = path.to_string_lossy().to_string();
-            let compiler = crate::compiler::Compiler::new(&path_str, false, false, None);
-            let function = compiler.compile(&ast).map_err(|e| format!("Compiler error in module '{}': {}", name, e))?;
-
-            // We need to execute the module script. It runs in the current VM's globals scope, 
-            // so exported variables are just inserted into the same globals map.
-            // Save current frames to isolate execution stack if needed, though pushing a new frame is sufficient.
-            
-            let old_frames_len = self.frames.len();
-            let old_stack_len = self.stack.len();
-
-            let closure = Arc::new(crate::value::Closure {
-                function: Arc::new(function),
-                upvalues: Vec::new(),
-            });
-            
-            // Push closure for the call
-            self.stack.push(Value::obj(Arc::new(Obj::Closure(closure.clone()))));
-            self.call_closure(closure, 0)?;
-            
-            // Run the module script
-            while self.frames.len() > old_frames_len {
-                let op = self.read_instruction()?;
-                self.execute_op(op)?;
-            }
-            
-            // Clean up stack
-            self.stack.truncate(old_stack_len);
-        }
-
-        self.module_states.insert(name, ModuleState::Loaded);
-        Ok(())
-    }
-
-    pub fn interpret(&mut self, mut function: Function) -> Result<(), String> {
-        self.intern_constants(&mut function);
-        let closure = Arc::new(crate::value::Closure {
-            function: Arc::new(function),
-            upvalues: Vec::new(),
-        });
-        self.stack.push(Value::obj(Arc::new(Obj::Closure(closure.clone()))));
-        self.call_closure(closure, 0)?;
-
-        self.run()
-    }
-
-    fn intern_constants(&mut self, function: &mut Function) {
-        for i in 0..function.chunk.constants.len() {
-            let val = &function.chunk.constants[i];
-            if val.is_obj() {
-                let obj = val.as_obj();
-                match &*obj {
-                    Obj::String(s) => {
-                        let interned = self.interner.intern(s);
-                        function.chunk.constants[i] = Value::obj(Arc::new(Obj::String(interned)));
-                    }
-                    Obj::Function(f) => {
-                        // Cast to mut to intern its constants too
-                        let f_ptr = Arc::as_ptr(f) as *mut Function;
-                        unsafe {
-                            self.intern_constants(&mut *f_ptr);
-                        }
-                    }
-                    Obj::Tuple(elements) => {
-                        // Tuple elements might be strings
-                        let mut new_elements = Vec::new();
-                        for elem in elements {
-                            if elem.is_obj() {
-                                if let Obj::String(s) = &*elem.as_obj() {
-                                    new_elements.push(Value::obj(Arc::new(Obj::String(self.intern(s)))));
-                                    continue;
-                                }
-                            }
-                            new_elements.push(elem.clone());
-                        }
-                        function.chunk.constants[i] = Value::obj(Arc::new(Obj::Tuple(new_elements)));
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    pub fn run(&mut self) -> Result<(), String> {
-        let starting_depth = self.frames.len();
-        loop {
-            let op = self.read_instruction()?;
-            self.execute_op(op)?;
-            if self.frames.len() < starting_depth {
-                return Ok(());
-            }
-        }
-    }
-
-    fn execute_op(&mut self, op: OpCode) -> Result<(), String> {
+    pub(crate) fn execute_op(&mut self, op: OpCode) -> Result<(), String> {
         match op {
             OpCode::Constant(idx) => {
                 let constant = self.read_constant(idx)?;
@@ -229,7 +34,7 @@ impl VM {
                                 upvalues.push(self.current_frame()?.closure.upvalues[req.index].clone());
                             }
                         }
-                        let closure = Arc::new(crate::value::Closure {
+                        let closure = Arc::new(Closure {
                             function: function.clone(),
                             upvalues,
                         });
@@ -384,8 +189,6 @@ impl VM {
                         );
 
                         // OSR: pop interpreter frame, restart function in JIT from IP=0.
-                        // Locals reinitialise from constants — result is identical but
-                        // all 10M iterations run as native code, not interpreted.
                         let frame = self.frames.pop().unwrap();
                         let stack_offset = frame.stack_offset;
 
@@ -412,7 +215,6 @@ impl VM {
                             // Do NOT return — let interpreter continue from deopt frame
                         } else {
                             // JIT finished — push result and return to caller immediately.
-                            // CRITICAL: return Ok(()) so interpreter does NOT re-run the loop.
                             self.stack.truncate(stack_offset);
                             self.push(result);
                             return Ok(());
@@ -825,23 +627,11 @@ impl VM {
                 self.handle_exception(error)?;
             }
 
-            OpCode::Await => {
-                // Stub: if it's a promise, we'd yield. For now, just return value if it's immediate.
-                let val = self.pop()?;
-                self.push(val);
-            }
-
-            OpCode::Cast(name_idx) => {
-                let _target_type = self.read_string(name_idx)?;
-                // Dynamic cast: for now just no-op as everything is Value
-                // In a strictly typed VM, we'd check and convert.
-            }
-
             OpCode::SetupHandler(offset) => {
                 let frame_idx = self.frames.len() - 1;
                 let stack_idx = self.stack.len();
                 let catch_ip = self.current_frame()?.ip + offset;
-                self.handlers.push(ExceptionHandler {
+                self.handlers.push(super::ExceptionHandler {
                     frame_idx,
                     stack_idx,
                     catch_ip,
@@ -850,11 +640,6 @@ impl VM {
 
             OpCode::PopHandler => {
                 self.handlers.pop();
-            }
-
-            OpCode::Finally => {
-                // Logic to pop a handler if we entered it normally?
-                // Tricky without a full Try/Finally opcode pairing.
             }
 
             OpCode::BuildClass(name_idx) => {
@@ -887,294 +672,5 @@ impl VM {
 
         }
         Ok(())
-    }
-
-    #[inline(always)]
-    fn read_instruction(&mut self) -> Result<OpCode, String> {
-        let frame = self.current_frame_mut()?;
-        if frame.ip >= frame.closure.function.chunk.code.len() {
-            return Err("Execution reached end of chunk without returning.".to_string());
-        }
-        let op = frame.closure.function.chunk.code[frame.ip];
-        frame.ip += 1;
-        Ok(op)
-    }
-
-    #[inline(always)]
-    fn read_constant(&self, idx: usize) -> Result<Value, String> {
-        let frame = self.current_frame()?;
-        if idx >= frame.closure.function.chunk.constants.len() {
-            return Err(format!("Constant index {} out of bounds.", idx));
-        }
-        Ok(frame.closure.function.chunk.constants[idx].clone())
-    }
-
-    fn read_string(&self, idx: usize) -> Result<Arc<str>, String> {
-        let val = self.read_constant(idx)?;
-        if val.is_obj() {
-            if let Obj::String(s) = &*val.as_obj() {
-                return Ok(s.clone());
-            }
-        }
-        Err("Expected string constant.".to_string())
-    }
-
-    #[inline(always)]
-    pub fn push(&mut self, value: Value) {
-        self.stack.push(value);
-    }
-
-    #[inline(always)]
-    pub fn pop(&mut self) -> Result<Value, String> {
-        self.stack.pop().ok_or_else(|| "Stack underflow.".to_string())
-    }
-
-    #[inline(always)]
-    fn peek(&self, distance: usize) -> Result<&Value, String> {
-        if distance >= self.stack.len() {
-            Err("Stack underflow on peek.".to_string())
-        } else {
-            Ok(&self.stack[self.stack.len() - 1 - distance])
-        }
-    }
-
-    pub fn call_value(&mut self, arg_count: u8) -> Result<(), String> {
-        let callee = self.peek(arg_count as usize)?.clone();
-        if !callee.is_obj() {
-            return Err(format!("Can only call functions, closures, and classes. Got: {}", callee));
-        }
-
-        match &*callee.as_obj() {
-            Obj::Function(fun) => {
-                let closure = Arc::new(crate::value::Closure {
-                    function: fun.clone(),
-                    upvalues: Vec::new(),
-                });
-                self.call_closure(closure, arg_count)
-            }
-            Obj::BoundMethod(bm) => {
-                let idx = self.stack.len() - arg_count as usize - 1;
-                self.stack[idx] = bm.receiver.clone();
-                let closure = Arc::new(crate::value::Closure {
-                    function: bm.method.clone(),
-                    upvalues: Vec::new(),
-                });
-                self.call_closure(closure, arg_count)
-            }
-            Obj::Closure(closure) => self.call_closure(closure.clone(), arg_count),
-            Obj::Class(cls) => {
-                let inst = Arc::new(RefCell::new(InstanceValue {
-                    class: cls.clone(),
-                    shape: self.root_shape.clone(),
-                    fields: RefCell::new(Vec::new()),
-                }));
-                let idx = self.stack.len() - arg_count as usize - 1;
-                self.stack[idx] = Value::obj(Arc::new(Obj::Object(inst.clone())));
-                
-                let mut constructor_val = None;
-                let mut current_class = Some(cls.clone());
-                while let Some(cls_ptr) = current_class {
-                    let methods = cls_ptr.methods.borrow();
-                    if let Some(v) = methods.get("init").or_else(|| methods.get("constructor")) {
-                        constructor_val = Some(v.clone());
-                        break;
-                    }
-                    current_class = cls_ptr.superclass.clone();
-                }
-
-                if let Some(constructor_val) = constructor_val {
-                    if constructor_val.is_obj() {
-                        let constructor_obj = constructor_val.as_obj();
-                        match &*constructor_obj {
-                            Obj::Closure(c) => {
-                                let c = c.clone();
-                                return self.call_closure(c, arg_count);
-                            }
-                            Obj::Function(f) => {
-                                let closure = Arc::new(crate::value::Closure {
-                                    function: f.clone(),
-                                    upvalues: Vec::new(),
-                                });
-                                return self.call_closure(closure, arg_count);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Ok(())
-            }
-            Obj::NativeFn(native) => {
-                let mut args = Vec::new();
-                for _ in 0..arg_count {
-                    args.push(self.pop()?);
-                }
-                args.reverse();
-                let result = native(self, &args)?;
-                self.pop()?; // Pop the native fn
-                self.push(result);
-                Ok(())
-            }
-            _ => Err(format!("Cannot call object instance directly.")),
-        }
-    }
-
-    fn call_closure(&mut self, closure: Arc<crate::value::Closure>, arg_count: u8) -> Result<(), String> {
-        if arg_count as usize != closure.function.arity {
-            return Err(format!("Expected {} arguments but got {}.", closure.function.arity, arg_count));
-        }
-
-        if self.frames.len() == 512 {
-            return Err("Stack overflow.".to_string());
-        }
-
-        if closure.function.increment_hotness() {
-            let native_ptr = self.jit_engine.compile(&closure.function);
-            closure.function.native_ptr.store(native_ptr as *mut u8, std::sync::atomic::Ordering::Relaxed);
-        }
-
-        let native_ptr = closure.function.native_ptr.load(std::sync::atomic::Ordering::Relaxed);
-        if !native_ptr.is_null() {
-             let native_fn: extern "C" fn(*mut VM, *const Value) -> Value = unsafe { std::mem::transmute(native_ptr) };
-             let stack_offset = self.stack.len() - arg_count as usize - 1;
-             
-             // Ensure stack has room for all locals before calling JIT
-             if self.stack.len() < stack_offset + closure.function.max_locals {
-                 self.stack.resize(stack_offset + closure.function.max_locals, Value::null());
-             }
-             
-             let args_ptr = unsafe { self.stack.as_ptr().add(stack_offset) };
-             let result = native_fn(self as *mut VM, args_ptr);
-             
-             if result.is_deopt() {
-                 // Type guard failed — resume interpreter at deopt IP.
-                 // Use the already-computed stack_offset, not a recalculation
-                 // (the stack may have been resized for max_locals above).
-                 let deopt_ip = result.as_deopt();
-                 let frame = CallFrame {
-                    closure,
-                    ip: deopt_ip,
-                    stack_offset,
-                 };
-                 self.frames.push(frame);
-                 return Ok(());
-             } else {
-                 // JIT returned successfully.
-                 // Truncate to stack_offset (not a pop loop) because the stack
-                 // may have been extended for max_locals above arg_count + 1.
-                 self.stack.truncate(stack_offset);
-                 self.stack.push(result);
-                 return Ok(());
-             }
-        }
-
-        let frame = CallFrame {
-            closure,
-            ip: 0,
-            stack_offset: self.stack.len() - arg_count as usize - 1,
-        };
-        self.frames.push(frame);
-        Ok(())
-    }
-
-    fn capture_upvalue(&mut self, index: usize) -> Arc<RefCell<crate::value::Upvalue>> {
-        for upvalue in &self.open_upvalues {
-            if upvalue.borrow().index == index {
-                return upvalue.clone();
-            }
-        }
-
-        let upvalue = Arc::new(RefCell::new(crate::value::Upvalue {
-            index,
-            closed: None,
-        }));
-        self.open_upvalues.push(upvalue.clone());
-        upvalue
-    }
-
-    fn close_upvalues(&mut self, last_idx: usize) {
-        let mut i = 0;
-        while i < self.open_upvalues.len() {
-            let upvalue_rc = self.open_upvalues[i].clone();
-            if upvalue_rc.borrow().index >= last_idx {
-                let val = self.stack[upvalue_rc.borrow().index].clone();
-                upvalue_rc.borrow_mut().closed = Some(val);
-                self.open_upvalues.remove(i);
-            } else {
-                i += 1;
-            }
-        }
-    }
-
-    pub fn is_falsey(&self, value: &Value) -> bool {
-        if value.is_null() { return true; }
-        if value.is_bool() { return !value.as_bool(); }
-        if value.is_int() { return value.as_int() == 0; }
-        if value.is_obj() {
-            match &*value.as_obj() {
-                Obj::Array(a) => a.borrow().is_empty(),
-                Obj::Dict(d) => d.borrow().is_empty(),
-                Obj::Set(s) => s.borrow().is_empty(),
-                Obj::Object(inst) => inst.borrow().fields.borrow().is_empty(),
-                _ => false,
-            }
-        } else {
-            false
-        }
-    }
-
-    fn binary_op_math<I, F>(&mut self, op_i: I, op_f: F) -> Result<(), String> 
-        where I: Fn(i64, i64) -> i64, F: Fn(f64, f64) -> f64 {
-        let b = self.pop()?;
-        let a = self.pop()?;
-        if a.is_int() && b.is_int() {
-            self.push(Value::int(op_i(a.as_int(), b.as_int())));
-        } else if (a.is_float() || a.is_int()) && (b.is_float() || b.is_int()) {
-            let va = if a.is_int() { a.as_int() as f64 } else { a.as_float() };
-            let vb = if b.is_int() { b.as_int() as f64 } else { b.as_float() };
-            self.push(Value::float(op_f(va, vb)));
-        } else {
-            return Err("Operands must be numbers.".to_string());
-        }
-        Ok(())
-    }
-
-    fn binary_op_bool<I>(&mut self, op: I) -> Result<(), String> 
-        where I: Fn(f64, f64) -> bool {
-        let b = self.pop()?;
-        let a = self.pop()?;
-        if (a.is_int() || a.is_float()) && (b.is_int() || b.is_float()) {
-            let va = if a.is_int() { a.as_int() as f64 } else { a.as_float() };
-            let vb = if b.is_int() { b.as_int() as f64 } else { b.as_float() };
-            self.push(Value::bool(op(va, vb)));
-        } else {
-            return Err("Operands must be numbers for comparison.".to_string());
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn current_frame(&self) -> Result<&CallFrame, String> {
-        self.frames.last().ok_or_else(|| "No call frame.".to_string())
-    }
-
-    #[inline(always)]
-    fn current_frame_mut(&mut self) -> Result<&mut CallFrame, String> {
-        self.frames.last_mut().ok_or_else(|| "No call frame.".to_string())
-    }
-
-    fn handle_exception(&mut self, error: Value) -> Result<(), String> {
-        if let Some(handler) = self.handlers.pop() {
-            // Unwind frames
-            self.frames.truncate(handler.frame_idx + 1);
-            // Unwind stack
-            self.stack.truncate(handler.stack_idx);
-            // Push error for catch param
-            self.push(error);
-            // Jump to catch
-            self.current_frame_mut()?.ip = handler.catch_ip;
-            Ok(())
-        } else {
-            Err(format!("Uncaught error: {}", error))
-        }
     }
 }

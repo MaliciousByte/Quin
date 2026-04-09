@@ -90,7 +90,7 @@ if ($BenchDirs.Count -gt 0) {
         Write-Host "  -- $benchName --" -ForegroundColor Cyan
 
         # Quin — warm up then read internal JIT time
-        $null = & $QuinExecutable $quinBench.FullName 2>&1
+        $null = & $QuinExecutable $quinBench    .FullName 2>&1
         $quinOut = (& $QuinExecutable $quinBench.FullName 2>&1) -join "`n"
         $quinMs = $null
         if ($quinOut -match "JIT time:\s*([\d.]+)s") {

@@ -420,13 +420,7 @@ impl Parser {
         self.consume(TokenType::LeftBrace, "Expect '{' after rescue parens.")?;
         let catch_body = Box::new(Stmt::Block(self.block()?));
         
-        let mut finally_body = None;
-        if self.match_token(&[TokenType::Finally]) {
-            self.consume(TokenType::LeftBrace, "Expect '{' after finally.")?;
-            finally_body = Some(Box::new(Stmt::Block(self.block()?)));
-        }
-
-        Ok(Stmt::TryCatch { try_body, catch_param, catch_body, finally_body })
+        Ok(Stmt::TryCatch { try_body, catch_param, catch_body })
     }
 
     fn throw_statement(&mut self) -> Result<Stmt, String> {
@@ -575,10 +569,6 @@ impl Parser {
             let right = self.unary()?;
             return Ok(Expr::Unary { operator, right: Box::new(right) });
         }
-        if self.match_token(&[TokenType::Await]) {
-            let expr = self.unary()?;
-            return Ok(Expr::Await(Box::new(expr)));
-        }
         self.call()
     }
 
@@ -599,9 +589,6 @@ impl Parser {
                 let index = self.expression()?;
                 self.consume(TokenType::RightBracket, "Expect ']' after index.")?;
                 expr = Expr::Index { object: Box::new(expr), bracket, index: Box::new(index) };
-            } else if self.match_token(&[TokenType::As]) {
-                let target = self.parse_type()?;
-                expr = Expr::Cast { expr: Box::new(expr), target };
             } else {
                 break;
             }

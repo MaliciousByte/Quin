@@ -32,8 +32,6 @@ pub enum Expr {
     OptionalGet { object: Box<Expr>, name: Token },
     Ternary { condition: Box<Expr>, then_branch: Box<Expr>, else_branch: Box<Expr> },
     Spread(Box<Expr>),
-    Await(Box<Expr>),
-    Cast { expr: Box<Expr>, target: Type },
     Pipe { left: Box<Expr>, right: Box<Expr> }, // value |> function
 }
 
@@ -104,7 +102,6 @@ pub enum Stmt {
         try_body: Box<Stmt>,
         catch_param: Token,
         catch_body: Box<Stmt>,
-        finally_body: Option<Box<Stmt>>,
     },
     Throw(Expr),
     Export(Box<Stmt>),

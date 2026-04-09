@@ -40,4 +40,5 @@ mandelbrot(50, 25);
 let t1 = clock();
 let result = mandelbrot(200, 50);
 let t2 = clock();
+emit("Result: " + result);
 emit("JIT time: " + (t2 - t1) + "s");

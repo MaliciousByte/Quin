@@ -32,7 +32,7 @@ pub enum TokenType {
     Struct, Class, Extends, Match, Attempt, Rescue, Use, From,
     Self_, Void, True, False,
     Enum, Type, Any, Dict, Set, Tuple,
-    Raise, Finally, Export, Async, Await, As,
+    Raise, Export, Async,
     Pub, Priv, Trait, Base, Shared, With,
 
     // Types (often parsed from identifiers, but good to have if we syntax highlight them as keywords)

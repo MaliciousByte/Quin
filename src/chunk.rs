@@ -48,9 +48,6 @@ pub enum OpCode {
     
     // Other
     Throw,
-    Await,
-    Cast(usize), // Type name constant
-    Finally,
     BuildClass(usize),
     Method(usize),
     JumpIfNull(usize),

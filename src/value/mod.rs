@@ -1,12 +1,25 @@
+pub mod function;
+pub mod types;
+
+pub use function::*;
+pub use types::*;
+
 use std::fmt;
 use std::sync::Arc;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use crate::chunk::Chunk;
 use crate::obj::Obj;
 
-#[repr(transparent)]
-pub struct Value(pub u64);
+// ─────────────────────────────────────────────────────────────────────────────
+// NaN-boxed Value representation
+//
+// Layout (64-bit):
+//   float:  any bit pattern where (bits & QNAN) != QNAN
+//   null:   QNAN | TAG_NULL
+//   false:  QNAN | TAG_FALSE
+//   true:   QNAN | TAG_TRUE
+//   int:    QNAN | TAG_INT | (48-bit payload)
+//   deopt:  QNAN | TAG_DEOPT | (48-bit IP)
+//   obj:    SIGN_BIT | QNAN | (pointer)
+// ─────────────────────────────────────────────────────────────────────────────
 
 const QNAN: u64 = 0x7ff8000000000000;
 const SIGN_BIT: u64 = 0x8000000000000000;
@@ -15,6 +28,9 @@ const TAG_FALSE: u64 = 0x0002000000000000;
 const TAG_TRUE: u64 = 0x0003000000000000;
 const TAG_INT: u64 = 0x0004000000000000;
 const TAG_DEOPT: u64 = 0x0007000000000000;
+
+#[repr(transparent)]
+pub struct Value(pub u64);
 
 impl Value {
     #[inline(always)]
@@ -86,7 +102,7 @@ impl Value {
         }
     }
 
-    // Manual reference counting for common operations
+    /// Increment Arc refcount without creating a new Value.
     #[inline(always)]
     pub fn mark(&self) {
         if self.is_obj() {
@@ -95,6 +111,7 @@ impl Value {
         }
     }
 
+    /// Decrement Arc refcount without dropping the Value.
     #[inline(always)]
     pub fn unmark(&self) {
         if self.is_obj() {
@@ -103,12 +120,6 @@ impl Value {
         }
     }
 }
-
-// We need to override Value's behavior to handle its pseudo-Drop
-// but we can't implement Drop for Copy. So we must be careful.
-// Instead of #[derive(Copy, Clone)], we'll go manual if we want full safety.
-// BUT, for a VM, we usually explicitly manage stack/globals.
-// Let's remove Copy and implement Clone and Drop.
 
 impl Clone for Value {
     #[inline(always)]
@@ -132,118 +143,6 @@ impl Drop for Value {
         }
     }
 }
-
-pub struct Function {
-    pub name: Arc<str>,
-    pub arity: usize,
-    pub max_locals: usize,
-    pub is_async: bool,
-    pub chunk: Chunk,
-    pub upvalues: Vec<UpvalueRequirement>,
-
-    // Profiler data
-    pub call_count: std::sync::atomic::AtomicU32,
-    pub is_hot: std::sync::atomic::AtomicBool,
-    pub native_ptr: std::sync::atomic::AtomicPtr<u8>,
-}
-
-impl Clone for Function {
-    fn clone(&self) -> Self {
-        Function {
-            name: self.name.clone(),
-            arity: self.arity,
-            max_locals: self.max_locals,
-            is_async: self.is_async,
-            chunk: self.chunk.clone(),
-            upvalues: self.upvalues.clone(),
-            call_count: std::sync::atomic::AtomicU32::new(self.call_count.load(std::sync::atomic::Ordering::Relaxed)),
-            is_hot: std::sync::atomic::AtomicBool::new(self.is_hot.load(std::sync::atomic::Ordering::Relaxed)),
-            native_ptr: std::sync::atomic::AtomicPtr::new(self.native_ptr.load(std::sync::atomic::Ordering::Relaxed)),
-        }
-    }
-}
-
-impl Function {
-    pub fn increment_hotness(&self) -> bool {
-        let count = self.call_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if count >= 50 && !self.is_hot.load(std::sync::atomic::Ordering::Relaxed) {
-            self.is_hot.store(true, std::sync::atomic::Ordering::Relaxed);
-            return true;
-        }
-        false
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct UpvalueRequirement {
-    pub is_local: bool,
-    pub index: usize,
-}
-
-pub struct Instance {
-    pub name: Arc<str>,
-    pub shape: Arc<Shape>,
-    pub fields: Vec<Value>,
-}
-
-#[derive(Clone)]
-pub struct Shape {
-    pub id: usize,
-    pub property_offsets: HashMap<Arc<str>, usize>,
-    pub transitions: RefCell<HashMap<Arc<str>, Arc<Shape>>>,
-}
-
-impl Shape {
-    pub fn new(id: usize) -> Self {
-        Shape {
-            id,
-            property_offsets: HashMap::new(),
-            transitions: RefCell::new(HashMap::new()),
-        }
-    }
-
-    pub fn transition(&self, name: Arc<str>, next_id: usize) -> Arc<Shape> {
-        let mut offsets = self.property_offsets.clone();
-        offsets.insert(name, offsets.len());
-        Arc::new(Shape {
-            id: next_id,
-            property_offsets: offsets,
-            transitions: RefCell::new(HashMap::new()),
-        })
-    }
-}
-
-#[derive(Clone)]
-pub struct ClassValue {
-    pub name: Arc<str>,
-    pub superclass: Option<Arc<ClassValue>>,
-    pub methods: RefCell<HashMap<Arc<str>, Value>>,
-}
-
-#[derive(Clone)]
-pub struct InstanceValue {
-    pub class: Arc<ClassValue>,
-    pub shape: Arc<Shape>,
-    pub fields: RefCell<Vec<Value>>,
-}
-
-pub struct Closure {
-    pub function: Arc<Function>,
-    pub upvalues: Vec<Arc<RefCell<Upvalue>>>,
-}
-
-pub struct Upvalue {
-    pub index: usize,          // Stack index when open
-    pub closed: Option<Value>, // Value when closed
-}
-
-#[derive(Clone)]
-pub struct BoundMethodValue {
-    pub receiver: Value,
-    pub method: Arc<Function>,
-}
-
-pub type NativeFn = fn(&mut crate::vm::VM, &[Value]) -> Result<Value, String>;
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {

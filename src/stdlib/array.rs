@@ -31,9 +31,6 @@ pub fn register(vm: &mut VM) {
 
     let name = vm.intern("filter");
     vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_filter))));
-
-    let name = vm.intern("len");
-    vm.globals.insert(name, Value::obj(Arc::new(Obj::NativeFn(native_len))));
 }
 
 fn native_push(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
@@ -218,17 +215,3 @@ fn native_filter(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
     Ok(Value::obj(Arc::new(Obj::Array(RefCell::new(result_elements)))))
 }
 
-fn native_len(_vm: &mut VM, args: &[Value]) -> Result<Value, String> {
-    if args.is_empty() { return Err("len expects 1 argument".to_string()); }
-    if args[0].is_obj() {
-        match &*args[0].as_obj() {
-            Obj::Array(arr) => return Ok(Value::int(arr.borrow().len() as i64)),
-            Obj::String(s) => return Ok(Value::int(s.len() as i64)),
-            Obj::Dict(m) => return Ok(Value::int(m.borrow().len() as i64)),
-            Obj::Set(s) => return Ok(Value::int(s.borrow().len() as i64)),
-            Obj::Tuple(t) => return Ok(Value::int(t.len() as i64)),
-            _ => {}
-        }
-    }
-    Err("len: argument must be a collection or string".to_string())
-}

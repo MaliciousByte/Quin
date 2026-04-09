@@ -193,13 +193,13 @@ impl Compiler {
                 }
                 self.emit(OpCode::Return, keyword.line);
             }
-            Stmt::TryCatch { try_body, catch_param, catch_body, finally_body } => {
+            Stmt::TryCatch { try_body, catch_param, catch_body } => {
                 let rescue_jump = self.emit_jump(OpCode::SetupHandler(0));
                 
                 self.compile_stmt(try_body)?;
                 self.emit(OpCode::PopHandler, 0); 
                 
-                let finally_jump = self.emit_jump(OpCode::Jump(0));
+                let end_jump = self.emit_jump(OpCode::Jump(0));
                 
                 self.patch_jump(rescue_jump);
                 
@@ -211,11 +211,7 @@ impl Compiler {
                 self.compile_stmt(catch_body)?;
                 self.end_scope();
                 
-                self.patch_jump(finally_jump);
-                
-                if let Some(fb) = finally_body {
-                    self.compile_stmt(fb)?;
-                }
+                self.patch_jump(end_jump);
             }
             Stmt::Throw(expr) => {
                 self.compile_expr(expr)?;
@@ -465,20 +461,7 @@ impl Compiler {
                 self.compile_expr(right)?;
                 self.compile_expr(left)?;
                 self.emit(OpCode::Call(1), 0);
-            }
-            Expr::Await(expr) => {
-                self.compile_expr(expr)?;
-                self.emit(OpCode::Await, 0);
-            }
-            Expr::Cast { expr, target } => {
-                self.compile_expr(expr)?;
-                let type_name = match target {
-                    crate::ast::Type::Simple(s) => s.clone(),
-                    _ => "complex_type".to_string(), // Simplified
-                };
-                let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(type_name.as_str())))));
-                self.emit(OpCode::Cast(idx), 0);
-            }
+        }
             Expr::Lambda { params, body, is_async } => {
                 let mut compiler = Compiler::new("lambda", *is_async, false, Some(self as *mut Compiler));
                 compiler.function.arity = params.len();
