@@ -1,5 +1,5 @@
 use crate::value::{Function, Value};
-use crate::chunk::OpCode;
+use crate::frontend::chunk::OpCode;
 
 /// JIT type lattice for speculative optimization.
 #[derive(Clone, Copy, PartialEq, Debug)]

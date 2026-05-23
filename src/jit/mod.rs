@@ -2,6 +2,9 @@ pub mod libcalls;
 pub mod codegen;
 pub mod types;
 
+#[cfg(feature = "hotaru-jit")]
+pub mod hotaru;
+
 use cranelift::prelude::settings;
 use cranelift::prelude::Configurable;
 use cranelift_jit::{JITBuilder, JITModule};

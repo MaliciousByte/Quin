@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use crate::ast::{Expr, Stmt, Literal};
-use crate::chunk::{Chunk, OpCode};
-use crate::token::{Token, TokenType};
+use crate::frontend::ast::{Expr, Stmt, Literal};
+use crate::frontend::chunk::{Chunk, OpCode};
+use crate::frontend::token::{Token, TokenType};
 use crate::value::{Value, Function};
-use crate::obj::Obj;
+use crate::vm::obj::Obj;
 use std::sync::Arc;
 
 pub struct Local {
@@ -79,7 +79,7 @@ impl Compiler {
                 }
 
                 match pattern {
-                    crate::ast::Pattern::Identifier(name) => {
+                    crate::frontend::ast::Pattern::Identifier(name) => {
                         if self.scope_depth > 0 {
                             self.locals.push(Local {
                                 name: name.lexeme.clone(),

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::cell::RefCell;
-use crate::chunk::OpCode;
+use crate::frontend::chunk::{OpCode, ICEntry};
 use crate::value::{Value, Closure};
-use crate::obj::Obj;
+use crate::vm::obj::Obj;
 use super::{VM, CallFrame};
 
 impl VM {
@@ -182,7 +182,7 @@ impl VM {
                     let closure = self.current_frame()?.closure.clone();
                     let native_ptr = self.jit_engine.compile(&closure.function);
 
-                    if !native_ptr.is_null() && self.jit_recursion_depth < 1 {
+                    if !native_ptr.is_null() && self.jit_recursion_depth < 500 {
                         closure.function.native_ptr.store(
                             native_ptr as *mut u8,
                             std::sync::atomic::Ordering::Relaxed,
@@ -192,11 +192,12 @@ impl VM {
                         let frame = self.frames.pop().unwrap();
                         let stack_offset = frame.stack_offset;
 
-                        if self.stack.len() < stack_offset + closure.function.max_locals {
-                            self.stack.resize(
-                                stack_offset + closure.function.max_locals,
-                                Value::null(),
-                            );
+                        let needed = stack_offset + closure.function.max_locals;
+                        if needed > super::STACK_MAX {
+                            return Err("Stack overflow".into());
+                        }
+                        if self.stack.len() < needed {
+                            self.stack.resize(needed, Value::null());
                         }
 
                         let native_fn: extern "C" fn(*mut VM, *const Value) -> Value =
@@ -207,13 +208,14 @@ impl VM {
                         self.jit_recursion_depth -= 1;
 
                         if result.is_deopt() {
-                            // Type guard failed — resume interpreter at deopt IP
+                            // Type guard failed — resume interpreter at deopt IP.
                             let deopt_ip = result.as_deopt();
-                            self.frames.push(CallFrame {
+                            let frame = CallFrame {
                                 closure,
                                 ip: deopt_ip,
                                 stack_offset,
-                            });
+                            };
+                            self.frames.push(frame);
                             // Do NOT return — let interpreter continue from deopt frame
                         } else {
                             // JIT finished — push result and return to caller immediately.
@@ -424,7 +426,7 @@ impl VM {
                                 off
                             } else if let Some(&off) = inst_ptr.shape.property_offsets.get(&name) {
                                 // Update IC
-                                let ic = crate::chunk::ICEntry { last_shape_id: inst_ptr.shape.id, offset: off };
+                                let ic = ICEntry { last_shape_id: inst_ptr.shape.id, offset: off };
                                 self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
                                 off
                             } else {
@@ -448,7 +450,7 @@ impl VM {
                                 self.push(obj_ptr.fields.borrow()[offset].clone());
                             } else if let Some(&offset) = obj_ptr.shape.property_offsets.get(&name) {
                                 // Update IC
-                                let ic = crate::chunk::ICEntry { last_shape_id: obj_ptr.shape.id, offset };
+                                let ic = ICEntry { last_shape_id: obj_ptr.shape.id, offset };
                                 self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
                                 self.pop()?;
                                 self.push(obj_ptr.fields.borrow()[offset].clone());
@@ -546,7 +548,7 @@ impl VM {
                                 inst_ptr.fields[offset] = value.clone();
                             } else if let Some(&offset) = inst_ptr.shape.property_offsets.get(&name) {
                                 // Update IC
-                                let ic = crate::chunk::ICEntry { last_shape_id: inst_ptr.shape.id, offset };
+                                let ic = ICEntry { last_shape_id: inst_ptr.shape.id, offset };
                                 self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
                                 inst_ptr.fields[offset] = value.clone();
                             } else {
@@ -562,7 +564,7 @@ impl VM {
                                 };
                                 
                                 let offset = next_shape.property_offsets.get(&name).cloned().unwrap();
-                                let ic = crate::chunk::ICEntry { last_shape_id: next_shape.id, offset };
+                                let ic = ICEntry { last_shape_id: next_shape.id, offset };
                                 self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
                                 
                                 inst_ptr.shape = next_shape;
@@ -584,7 +586,7 @@ impl VM {
                                 obj_ptr.fields.borrow_mut()[offset] = value.clone();
                             } else if let Some(&offset) = obj_ptr.shape.property_offsets.get(&name) {
                                 // Update IC
-                                let ic = crate::chunk::ICEntry { last_shape_id: obj_ptr.shape.id, offset };
+                                let ic = ICEntry { last_shape_id: obj_ptr.shape.id, offset };
                                 self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
                                 obj_ptr.fields.borrow_mut()[offset] = value.clone();
                             } else {
@@ -600,7 +602,7 @@ impl VM {
                                 };
                                 
                                 let offset = next_shape.property_offsets.get(&name).cloned().unwrap();
-                                let ic = crate::chunk::ICEntry { last_shape_id: next_shape.id, offset };
+                                let ic = ICEntry { last_shape_id: next_shape.id, offset };
                                 self.frames.last_mut().unwrap().closure.function.chunk.property_caches.borrow_mut()[ip] = Some(ic);
                                 
                                 obj_ptr.shape = next_shape;

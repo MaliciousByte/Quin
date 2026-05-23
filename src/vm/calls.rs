@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::cell::RefCell;
 use crate::value::{Value, Closure, InstanceValue};
-use crate::obj::Obj;
+use crate::vm::obj::Obj;
 use super::{VM, CallFrame};
 
 impl VM {
@@ -100,7 +100,7 @@ impl VM {
         }
 
         let native_ptr = closure.function.native_ptr.load(std::sync::atomic::Ordering::Relaxed);
-        if !native_ptr.is_null() && self.jit_recursion_depth < 1 {
+        if !native_ptr.is_null() && self.jit_recursion_depth < 500 {
              let native_fn: extern "C" fn(*mut VM, *const Value) -> Value = unsafe { std::mem::transmute(native_ptr) };
              let stack_offset = self.stack.len() - arg_count as usize - 1;
              

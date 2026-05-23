@@ -10,3 +10,7 @@ cranelift-jit = "0.106.1"
 cranelift-frontend = "0.106.1"
 cranelift-native = "0.106.1"
 target-lexicon = "0.12"
+
+[features]
+hotaru-jit = []
+

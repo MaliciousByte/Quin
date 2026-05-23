@@ -1,7 +1,7 @@
 use std::sync::Arc;
-use crate::chunk::OpCode;
+use crate::frontend::chunk::OpCode;
 use crate::value::Value;
-use crate::obj::Obj;
+use crate::vm::obj::Obj;
 use super::{VM, CallFrame};
 
 impl VM {
@@ -37,6 +37,11 @@ impl VM {
 
     #[inline(always)]
     pub fn push(&mut self, value: Value) {
+        if self.stack.len() >= super::STACK_MAX {
+            // Hard limit — prevents OOM on unbounded recursion.
+            // This converts a silent allocation spiral into a clear runtime error.
+            panic!("Stack overflow");
+        }
         self.stack.push(value);
     }
 

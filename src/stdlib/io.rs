@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use crate::vm::VM;
 use crate::value::Value;
-use crate::obj::Obj;
+use crate::vm::obj::Obj;
 
 pub fn register_core(vm: &mut VM) {
     // emit is already registered in VM::new(), but we re-register here for consistency
