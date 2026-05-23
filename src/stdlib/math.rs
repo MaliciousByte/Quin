@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use crate::vm::VM;
 use crate::value::Value;
-use crate::obj::Obj;
+use crate::vm::obj::Obj;
 
 pub fn register(vm: &mut VM) {
     // sqrt - already exists but we re-register for consistency

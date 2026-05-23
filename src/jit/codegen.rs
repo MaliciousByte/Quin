@@ -1,7 +1,7 @@
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
 use crate::value::{Function, Value};
-use crate::chunk::OpCode;
+use crate::frontend::chunk::OpCode;
 use std::collections::HashMap;
 use super::JitEngine;
 use super::types::JitType;
@@ -290,14 +290,28 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
     macro_rules! get_raw {
         ($s:expr) => {{
             let v = b.use_var(vars[$s]);
-            if var_is_raw[$s] { v } else { b.ins().band(v, c_pmask) }
+            if var_is_raw[$s] {
+                v
+            } else {
+                let masked = b.ins().band(v, c_pmask);
+                let amt = b.ins().iconst(types::I32, 16);
+                let shl = b.ins().ishl(masked, amt);
+                b.ins().sshr(shl, amt)
+            }
         }};
     }
 
     macro_rules! get_tagged {
         ($s:expr) => {{
             let v = b.use_var(vars[$s]);
-            if var_is_raw[$s] { b.ins().bor(v, c_prefix) } else { v }
+            if var_is_raw[$s] {
+                if slot_types[$s] == JitType::ProvenFloat {
+                    v
+                } else {
+                    let masked = b.ins().band(v, c_pmask);
+                    b.ins().bor(masked, c_prefix)
+                }
+            } else { v }
         }};
     }
 
@@ -309,9 +323,21 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
                 let want_raw = av_vt == JitType::ProvenInt || av_vt == JitType::ProvenFloat;
                 let v = b.use_var(vars[i]);
                 a.push(if want_raw && !var_is_raw[i] {
-                    b.ins().band(v, c_pmask)
+                    if av_vt == JitType::ProvenFloat {
+                        v
+                    } else {
+                        let masked = b.ins().band(v, c_pmask);
+                        let amt = b.ins().iconst(types::I32, 16);
+                        let shl = b.ins().ishl(masked, amt);
+                        b.ins().sshr(shl, amt)
+                    }
                 } else if !want_raw && var_is_raw[i] {
-                    b.ins().bor(v, c_prefix)
+                    if slot_types[i] == JitType::ProvenFloat {
+                        v
+                    } else {
+                        let masked = b.ins().band(v, c_pmask);
+                        b.ins().bor(masked, c_prefix)
+                    }
                 } else { v });
             }
             a
@@ -324,7 +350,8 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
             if slot_types[$s] == JitType::ProvenFloat {
                 v
             } else if var_is_raw[$s] {
-                b.ins().bor(v, c_prefix)
+                let masked = b.ins().band(v, c_pmask);
+                b.ins().bor(masked, c_prefix)
             } else {
                 v
             }
@@ -463,9 +490,21 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
                 let idx_vt   = var_types.get(*idx).copied().unwrap_or(JitType::Unknown);
                 let want_raw = idx_vt == JitType::ProvenInt || idx_vt == JitType::ProvenFloat;
                 let stored = if want_raw && !var_is_raw[top] {
-                    b.ins().band(top_v, c_pmask)
+                    if idx_vt == JitType::ProvenFloat {
+                        top_v
+                    } else {
+                        let masked = b.ins().band(top_v, c_pmask);
+                        let amt = b.ins().iconst(types::I32, 16);
+                        let shl = b.ins().ishl(masked, amt);
+                        b.ins().sshr(shl, amt)
+                    }
                 } else if !want_raw && var_is_raw[top] {
-                    b.ins().bor(top_v, c_prefix)
+                    if slot_types[top] == JitType::ProvenFloat {
+                        top_v
+                    } else {
+                        let masked = b.ins().band(top_v, c_pmask);
+                        b.ins().bor(masked, c_prefix)
+                    }
                 } else { top_v };
                 b.def_var(vars[*idx], stored);
                 var_is_raw[*idx]  = want_raw;
@@ -569,6 +608,21 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
                         OpCode::Divide   => b.ins().sdiv(av, bv),
                         _ => unreachable!(),
                     };
+                    let c_max = b.ins().iconst(types::I64, 0x00007FFFFFFFFFFFi64);
+                    let c_min = b.ins().iconst(types::I64, -0x0000800000000000i64);
+                    let ovf = b.ins().icmp(IntCC::SignedGreaterThan, r, c_max);
+                    let unf = b.ins().icmp(IntCC::SignedLessThan, r, c_min);
+                    let out_of_bounds = b.ins().bor(ovf, unf);
+                    let ok_blk = b.create_block();
+                    let err_blk = b.create_block();
+                    b.ins().brif(out_of_bounds, err_blk, &[], ok_blk, &[]);
+                    
+                    b.switch_to_block(err_blk);
+                    b.seal_block(err_blk);
+                    deopt_ret!(ip);
+                    
+                    b.switch_to_block(ok_blk);
+                    b.seal_block(ok_blk);
                     (r, JitType::ProvenInt)
                 } else if !any_unknown {
                     // Static mixed: one ProvenFloat + one ProvenInt
@@ -577,13 +631,13 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
                     let av_f = if slot_types[a] == JitType::ProvenFloat {
                         b.ins().bitcast(types::F64, MemFlags::new(), av_i)
                     } else {
-                        let raw = if var_is_raw[a] { av_i } else { b.ins().band(av_i, c_pmask) };
+                        let raw = get_raw!(a);
                         b.ins().fcvt_from_sint(types::F64, raw)
                     };
                     let bv_f = if slot_types[b_] == JitType::ProvenFloat {
                         b.ins().bitcast(types::F64, MemFlags::new(), bv_i)
                     } else {
-                        let raw = if var_is_raw[b_] { bv_i } else { b.ins().band(bv_i, c_pmask) };
+                        let raw = get_raw!(b_);
                         b.ins().fcvt_from_sint(types::F64, raw)
                     };
                     let fr = match op {
@@ -635,14 +689,22 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
                         if st == JitType::ProvenFloat {
                             builder.ins().bitcast(types::F64, MemFlags::new(), sv)
                         } else if st == JitType::ProvenInt {
-                            let raw = if is_raw { sv } else { builder.ins().band(sv, c_pmask) };
+                            let raw = if is_raw { sv } else {
+                                let masked = builder.ins().band(sv, c_pmask);
+                                let amt = builder.ins().iconst(types::I32, 16);
+                                let shl = builder.ins().ishl(masked, amt);
+                                builder.ins().sshr(shl, amt)
+                            };
                             builder.ins().fcvt_from_sint(types::F64, raw)
                         } else {
                             let sv_and = builder.ins().band(sv, c_qnan_val);
                             let sv_is_float = builder.ins().icmp(IntCC::NotEqual, sv_and, c_qnan_val);
                             let as_float = builder.ins().bitcast(types::F64, MemFlags::new(), sv);
                             let raw_payload = builder.ins().band(sv, c_pmask);
-                            let as_int_f = builder.ins().fcvt_from_sint(types::F64, raw_payload);
+                            let amt = builder.ins().iconst(types::I32, 16);
+                            let shl = builder.ins().ishl(raw_payload, amt);
+                            let sext = builder.ins().sshr(shl, amt);
+                            let as_int_f = builder.ins().fcvt_from_sint(types::F64, sext);
                             builder.ins().select(sv_is_float, as_float, as_int_f)
                         }
                     };
@@ -661,8 +723,8 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
                     // ── Int path ──
                     b.switch_to_block(int_blk);
                     b.seal_block(int_blk);
-                    let a_raw = if var_is_raw[a] { av } else { b.ins().band(av, c_pmask) };
-                    let b_raw = if var_is_raw[b_] { bv } else { b.ins().band(bv, c_pmask) };
+                    let a_raw = get_raw!(a);
+                    let b_raw = get_raw!(b_);
                     let ir = match op {
                         OpCode::Add      => b.ins().iadd(a_raw, b_raw),
                         OpCode::Subtract => b.ins().isub(a_raw, b_raw),
@@ -670,7 +732,24 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
                         OpCode::Divide   => b.ins().sdiv(a_raw, b_raw),
                         _ => unreachable!(),
                     };
-                    let int_res = b.ins().bor(ir, c_prefix);
+                    let c_max = b.ins().iconst(types::I64, 0x00007FFFFFFFFFFFi64);
+                    let c_min = b.ins().iconst(types::I64, -0x0000800000000000i64);
+                    let ovf = b.ins().icmp(IntCC::SignedGreaterThan, ir, c_max);
+                    let unf = b.ins().icmp(IntCC::SignedLessThan, ir, c_min);
+                    let out_of_bounds = b.ins().bor(ovf, unf);
+                    let ok_blk = b.create_block();
+                    let err_blk = b.create_block();
+                    b.ins().brif(out_of_bounds, err_blk, &[], ok_blk, &[]);
+                    
+                    b.switch_to_block(err_blk);
+                    b.seal_block(err_blk);
+                    deopt_ret!(ip);
+                    
+                    b.switch_to_block(ok_blk);
+                    b.seal_block(ok_blk);
+                    
+                    let ir_masked = b.ins().band(ir, c_pmask);
+                    let int_res = b.ins().bor(ir_masked, c_prefix);
                     b.ins().jump(merge_blk, &[int_res]);
 
                     // ── Merge ──
@@ -741,14 +820,22 @@ pub(crate) fn compile_function(engine: &mut JitEngine, function: &Function) -> *
                         if st == JitType::ProvenFloat {
                             builder.ins().bitcast(types::F64, MemFlags::new(), sv)
                         } else if st == JitType::ProvenInt {
-                            let raw = if is_raw { sv } else { builder.ins().band(sv, c_pmask) };
+                            let raw = if is_raw { sv } else {
+                                let masked = builder.ins().band(sv, c_pmask);
+                                let amt = builder.ins().iconst(types::I32, 16);
+                                let shl = builder.ins().ishl(masked, amt);
+                                builder.ins().sshr(shl, amt)
+                            };
                             builder.ins().fcvt_from_sint(types::F64, raw)
                         } else {
                             let sv_and = builder.ins().band(sv, c_qnan_val);
                             let sv_is_float = builder.ins().icmp(IntCC::NotEqual, sv_and, c_qnan_val);
                             let as_float = builder.ins().bitcast(types::F64, MemFlags::new(), sv);
                             let raw_payload = builder.ins().band(sv, c_pmask);
-                            let as_int_f = builder.ins().fcvt_from_sint(types::F64, raw_payload);
+                            let amt = builder.ins().iconst(types::I32, 16);
+                            let shl = builder.ins().ishl(raw_payload, amt);
+                            let sext = builder.ins().sshr(shl, amt);
+                            let as_int_f = builder.ins().fcvt_from_sint(types::F64, sext);
                             builder.ins().select(sv_is_float, as_float, as_int_f)
                         }
                     };

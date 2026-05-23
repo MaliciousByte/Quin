@@ -1,20 +1,13 @@
-pub mod token;
-pub mod lexer;
-pub mod ast;
-pub mod parser;
+pub mod frontend;
 pub mod value;
-pub mod chunk;
-pub mod compiler;
 pub mod vm;
-pub mod obj;
 pub mod jit;
-pub mod interner;
 pub mod stdlib;
 pub mod repl;
 
-use lexer::Lexer;
-use parser::Parser;
-use compiler::Compiler;
+use frontend::lexer::Lexer;
+use frontend::parser::Parser;
+use frontend::compiler::Compiler;
 use vm::VM;
 
 use std::env;

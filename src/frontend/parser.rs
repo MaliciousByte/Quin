@@ -1,5 +1,5 @@
-use crate::token::{Token, TokenType};
-use crate::ast::{Expr, Stmt, Literal, Type, Pattern, Visibility, MatchArm};
+use crate::frontend::token::{Token, TokenType};
+use crate::frontend::ast::{Expr, Stmt, Literal, Type, Pattern, Visibility, MatchArm};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -660,7 +660,7 @@ impl Parser {
                     if expr_str.is_empty() { continue; }
                     
                     // Parse inner expression
-                    let mut lexer = crate::lexer::Lexer::new(&expr_str);
+                    let mut lexer = crate::frontend::lexer::Lexer::new(&expr_str);
                     let mut tokens = lexer.scan_tokens()?;
                     if tokens.last().map_or(false, |t| t.ty == TokenType::Eof) {
                         tokens.pop();
@@ -905,21 +905,21 @@ impl Parser {
     }
 
 
-    fn parse_type(&mut self) -> Result<crate::ast::Type, String> {
+    fn parse_type(&mut self) -> Result<crate::frontend::ast::Type, String> {
         let mut ty = if self.match_token(&[TokenType::Any]) {
-            crate::ast::Type::Any
+            crate::frontend::ast::Type::Any
         } else if self.match_token(&[TokenType::Dict]) {
             self.consume(TokenType::Less, "Expect '<' after 'dict'.")?;
             let key = self.parse_type()?;
             self.consume(TokenType::Comma, "Expect ',' between key and value types.")?;
             let value = self.parse_type()?;
             self.consume(TokenType::Greater, "Expect '>' after dict types.")?;
-            crate::ast::Type::Dict(Box::new(key), Box::new(value))
+            crate::frontend::ast::Type::Dict(Box::new(key), Box::new(value))
         } else if self.match_token(&[TokenType::Set]) {
             self.consume(TokenType::Less, "Expect '<' after 'set'.")?;
             let inner = self.parse_type()?;
             self.consume(TokenType::Greater, "Expect '>' after set type.")?;
-            crate::ast::Type::Set(Box::new(inner))
+            crate::frontend::ast::Type::Set(Box::new(inner))
         } else if self.match_token(&[TokenType::Tuple]) {
             self.consume(TokenType::Less, "Expect '<' after 'tuple'.")?;
             let mut types = Vec::new();
@@ -930,7 +930,7 @@ impl Parser {
                 }
             }
             self.consume(TokenType::Greater, "Expect '>' after tuple types.")?;
-            crate::ast::Type::Tuple(types)
+            crate::frontend::ast::Type::Tuple(types)
         } else if self.match_token(&[TokenType::LeftParen]) {
             let mut types = Vec::new();
             if !self.check(TokenType::RightParen) {
@@ -940,7 +940,7 @@ impl Parser {
                 }
             }
             self.consume(TokenType::RightParen, "Expect ')' after tuple types.")?;
-            crate::ast::Type::Tuple(types)
+            crate::frontend::ast::Type::Tuple(types)
         } else if self.match_token(&[
             TokenType::Identifier,
             TokenType::TypeInt,
@@ -949,7 +949,7 @@ impl Parser {
             TokenType::TypeBool,
             TokenType::Void,
         ]) {
-            crate::ast::Type::Simple(self.previous().lexeme.clone())
+            crate::frontend::ast::Type::Simple(self.previous().lexeme.clone())
         } else {
             return Err(format!("Expect type at line {}", self.peek().line));
         };
@@ -957,7 +957,7 @@ impl Parser {
         // Handle array brackets
         while self.match_token(&[TokenType::LeftBracket]) {
             self.consume(TokenType::RightBracket, "Expect ']' after '['.")?;
-            ty = crate::ast::Type::Array(Box::new(ty));
+            ty = crate::frontend::ast::Type::Array(Box::new(ty));
         }
 
         // Handle Union types
@@ -967,7 +967,7 @@ impl Parser {
                 types.push(self.parse_type()?);
                 if !self.match_token(&[TokenType::Pipe]) { break; }
             }
-            ty = crate::ast::Type::Union(types);
+            ty = crate::frontend::ast::Type::Union(types);
         }
 
         Ok(ty)

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use crate::value::{Value, Closure};
-use crate::obj::Obj;
+use crate::vm::obj::Obj;
 use std::path::{Path, PathBuf};
 use std::fs;
 use super::VM;
@@ -43,14 +43,14 @@ impl VM {
             let source = fs::read_to_string(&path)
                 .map_err(|e| format!("Could not load module '{}' at {}: {}", name, path.display(), e))?;
 
-            let mut lexer = crate::lexer::Lexer::new(&source);
+            let mut lexer = crate::frontend::lexer::Lexer::new(&source);
             let tokens = lexer.scan_tokens().map_err(|e| format!("Lexer error in module '{}': {}", name, e))?;
 
-            let mut parser = crate::parser::Parser::new(tokens);
+            let mut parser = crate::frontend::parser::Parser::new(tokens);
             let ast = parser.parse().map_err(|e| format!("Parser error in module '{}': {}", name, e))?;
 
             let path_str = path.to_string_lossy().to_string();
-            let compiler = crate::compiler::Compiler::new(&path_str, false, false, None);
+            let compiler = crate::frontend::compiler::Compiler::new(&path_str, false, false, None);
             let function = compiler.compile(&ast).map_err(|e| format!("Compiler error in module '{}': {}", name, e))?;
 
             let old_frames_len = self.frames.len();

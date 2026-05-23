@@ -6,7 +6,7 @@ pub use types::*;
 
 use std::fmt;
 use std::sync::Arc;
-use crate::obj::Obj;
+use crate::vm::obj::Obj;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NaN-boxed Value representation
@@ -29,6 +29,10 @@ pub(crate) const TAG_TRUE: u64 = 0x0003000000000000;
 pub(crate) const TAG_INT: u64 = 0x0004000000000000;
 pub(crate) const TAG_DEOPT: u64 = 0x0007000000000000;
 
+// 48-bit signed integer payload range (payload is bits 0..47)
+pub(crate) const INT48_MAX: i64 =  0x0000_7FFF_FFFF_FFFF;
+pub(crate) const INT48_MIN: i64 = -0x0000_8000_0000_0000;
+
 #[repr(transparent)]
 pub struct Value(pub u64);
 
@@ -46,7 +50,13 @@ impl Value {
     }
     #[inline(always)]
     pub fn int(i: i64) -> Self {
-        Value(QNAN | TAG_INT | (i as u64 & 0x0000FFFFFFFFFFFF))
+        if i >= INT48_MIN && i <= INT48_MAX {
+            // Fast path: fits in the 48-bit NaN-box payload
+            Value(QNAN | TAG_INT | (i as u64 & 0x0000FFFFFFFFFFFF))
+        } else {
+            // Overflow: promote to f64 transparently (same as V8 Smi overflow)
+            Value::float(i as f64)
+        }
     }
     #[inline(always)]
     pub fn obj(obj: Arc<Obj>) -> Self {

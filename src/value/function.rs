@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::cell::RefCell;
-use crate::chunk::Chunk;
+use crate::frontend::chunk::Chunk;
 use super::Value;
 
 pub struct Function {

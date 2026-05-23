@@ -1,4 +1,5 @@
 use crate::value::Value;
+use crate::vm::obj::Obj;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LIBCALL HELPERS — extern "C" functions callable from JIT-compiled code
@@ -14,7 +15,7 @@ pub extern "C" fn quin_array_get(arr_bits: i64, idx_bits: i64) -> i64 {
     let result = if arr_val.is_obj() {
         let obj = arr_val.as_obj();
         match &*obj {
-            crate::obj::Obj::Array(arr) => {
+            Obj::Array(arr) => {
                 if idx_val.is_int() {
                     let i = idx_val.as_int();
                     let elements = arr.borrow();
@@ -50,7 +51,7 @@ pub extern "C" fn quin_array_set(arr_bits: i64, idx_bits: i64, val_bits: i64) ->
     if arr_val.is_obj() {
         let obj = arr_val.as_obj();
         match &*obj {
-            crate::obj::Obj::Array(arr) => {
+            Obj::Array(arr) => {
                 if idx_val.is_int() {
                     let i = idx_val.as_int();
                     let mut elements = arr.borrow_mut();
@@ -79,7 +80,7 @@ pub extern "C" fn quin_call_native_1(vm_ptr: *mut crate::vm::VM, fn_bits: i64, a
     let result = if fn_val.is_obj() {
         let obj = fn_val.as_obj();
         match &*obj {
-            crate::obj::Obj::NativeFn(native) => {
+            Obj::NativeFn(native) => {
                 let vm = unsafe { &mut *vm_ptr };
                 match native(vm, &[arg_val.clone()]) {
                     Ok(v) => {
@@ -95,9 +96,11 @@ pub extern "C" fn quin_call_native_1(vm_ptr: *mut crate::vm::VM, fn_bits: i64, a
                     }
                 }
             }
-            crate::obj::Obj::Closure(closure) => {
+            Obj::Closure(closure) => {
                 let vm = unsafe { &mut *vm_ptr };
                 let closure = closure.clone();
+                vm.push(fn_val.clone());
+                vm.push(arg_val.clone());
                 let starting_frames = vm.frames.len();
                 match vm.call_closure(closure, 1) {
                     Ok(_) => {
@@ -148,7 +151,7 @@ pub extern "C" fn quin_get_global(vm_ptr: *mut crate::vm::VM, const_ptr: *const 
     if name_val.is_obj() {
         let obj = name_val.as_obj();
         match &*obj {
-            crate::obj::Obj::String(s) => {
+            Obj::String(s) => {
                 if let Some(val) = vm.globals.get(s) {
                     let bits = val.0 as i64;
                     val.mark(); // increment refcount for the returned reference

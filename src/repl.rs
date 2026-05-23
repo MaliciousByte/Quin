@@ -1,6 +1,6 @@
-use crate::lexer::Lexer;
-use crate::parser::Parser;
-use crate::compiler::Compiler;
+use crate::frontend::lexer::Lexer;
+use crate::frontend::parser::Parser;
+use crate::frontend::compiler::Compiler;
 use crate::vm::VM;
 
 use std::io::{self, Write, BufRead};
@@ -116,7 +116,7 @@ fn execute_repl_line(vm: &mut VM, source: &str) -> Result<(), String> {
     let ast = parser.parse()?;
 
     // Check if the last statement is an expression — if so, auto-print it
-    let _should_print = matches!(ast.last(), Some(crate::ast::Stmt::Expression(_)));
+    let _should_print = matches!(ast.last(), Some(crate::frontend::ast::Stmt::Expression(_)));
 
     let compiler = Compiler::new("repl", false, false, None);
     let function = compiler.compile(&ast)?;

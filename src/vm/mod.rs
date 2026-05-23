@@ -3,14 +3,16 @@ mod calls;
 mod modules;
 mod upvalues;
 mod helpers;
+pub mod interner;
+pub mod obj;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::cell::RefCell;
 use crate::value::{Value, Function, Closure, Shape};
-use crate::obj::Obj;
+use obj::Obj;
 use crate::jit::JitEngine;
-use crate::interner::StringInterner;
+use interner::StringInterner;
 use std::path::PathBuf;
 
 pub use modules::ModuleState;
