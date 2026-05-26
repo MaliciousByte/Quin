@@ -178,9 +178,7 @@ fn native_map(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
 
     let mut result_elements = Vec::with_capacity(elements.len());
     for element in elements {
-        vm.push(callback.clone());
-        vm.push(element);
-        vm.call_value(1)?;
+        vm.call_value_native(callback.clone(), &[element])?;
         vm.run()?;
         result_elements.push(vm.pop()?);
     }
@@ -202,9 +200,7 @@ fn native_filter(vm: &mut VM, args: &[Value]) -> Result<Value, String> {
 
     let mut result_elements = Vec::new();
     for element in elements {
-        vm.push(callback.clone());
-        vm.push(element.clone());
-        vm.call_value(1)?;
+        vm.call_value_native(callback.clone(), &[element.clone()])?;
         vm.run()?;
         let res = vm.pop()?;
         if !vm.is_falsey(&res) {

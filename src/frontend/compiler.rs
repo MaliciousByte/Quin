@@ -1,6 +1,17 @@
 use std::collections::HashMap;
-use crate::frontend::ast::{Expr, Stmt, Literal};
-use crate::frontend::chunk::{Chunk, OpCode};
+use crate::frontend::ast::{Expr, Stmt, Literal, Type};
+use crate::frontend::chunk::{Chunk, TypeTag, encode_inst, encode_inst_imm16, decode_inst_imm16};
+use crate::frontend::chunk::{
+    OP_LOAD_CONST, OP_LOAD_NULL, OP_LOAD_TRUE, OP_LOAD_FALSE, OP_MOVE,
+    OP_GET_GLOBAL, OP_SET_GLOBAL, OP_DEFINE_GLOBAL, OP_EQUAL, OP_GREATER,
+    OP_LESS, OP_ADD, OP_SUBTRACT, OP_MULTIPLY, OP_DIVIDE, OP_NOT, OP_NEGATE,
+    OP_JUMP_IF_FALSE, OP_JUMP, OP_LOOP, OP_CALL, OP_RETURN, OP_BUILD_ARRAY,
+    OP_BUILD_DICT, OP_BUILD_TUPLE, OP_BUILD_SET, OP_GET_INDEX, OP_SET_INDEX,
+    OP_BUILD_INSTANCE, OP_GET_PROPERTY, OP_SET_PROPERTY, OP_THROW, OP_BUILD_CLASS,
+    OP_METHOD, OP_JUMP_IF_NULL, OP_CLOSURE, OP_GET_UPVALUE, OP_SET_UPVALUE,
+    OP_CLOSE_UPVALUE, OP_SETUP_HANDLER, OP_POP_HANDLER, OP_IMPORT_MODULE,
+    OP_IMPORT_ITEMS, OP_NEQ,
+};
 use crate::frontend::token::{Token, TokenType};
 use crate::value::{Value, Function};
 use crate::vm::obj::Obj;
@@ -26,6 +37,10 @@ pub struct Compiler {
     pub scope_depth: usize,
     pub globals: HashMap<String, usize>,
     pub emitting_method: bool,
+
+    pub type_metadata: Vec<Option<TypeTag>>,
+    pub mutability_flags: Vec<bool>,
+    pub max_registers: usize,
 }
 
 impl Compiler {
@@ -48,34 +63,115 @@ impl Compiler {
             scope_depth: 0,
             globals: HashMap::new(),
             emitting_method: false,
+            type_metadata: Vec::new(),
+            mutability_flags: Vec::new(),
+            max_registers: 1, // slot 0 for closure/self
         };
         // slot 0 for local call frame
         let slot0_name = if is_method { "self".to_string() } else { "".to_string() };
         compiler.locals.push(Local { name: slot0_name, depth: 0, is_captured: false });
-        compiler.function.max_locals = 1;
+        compiler.type_metadata.push(None);
+        compiler.mutability_flags.push(false);
         compiler
+    }
+
+    fn update_max_registers(&mut self, reg: u8) {
+        let r = (reg as usize) + 1;
+        if r > self.max_registers {
+            self.max_registers = r;
+        }
     }
 
     pub fn compile(mut self, stmts: &[Stmt]) -> Result<Function, String> {
         for stmt in stmts {
             self.compile_stmt(stmt)?;
         }
-        self.emit(OpCode::Return, 0); // slot 0 return is default
+        
+        // Return null at the end by default if not returned
+        let res_reg = self.locals.len() as u8;
+        self.update_max_registers(res_reg);
+        self.emit_inst(encode_inst(OP_LOAD_NULL, res_reg, 0, 0), 0);
+        self.emit_inst(encode_inst(OP_RETURN, res_reg, 0, 0), 0);
+
+        self.finish()
+    }
+
+    fn finish(mut self) -> Result<Function, String> {
+        // Resize type metadata to match register count
+        self.function.chunk.register_count = self.max_registers as u32;
+        self.function.max_locals = self.max_registers;
+
+        let mut type_meta = self.type_metadata;
+        type_meta.resize(self.max_registers, None);
+        let mut mut_flags = self.mutability_flags;
+        mut_flags.resize(self.max_registers, false);
+
+        self.function.chunk.type_metadata = type_meta;
+        self.function.chunk.mutability_flags = mut_flags;
+        self.function.chunk.observed_types = vec![None; self.max_registers];
+
+        // Compute bytecode_hash before returning
+        let mut h1: u64 = 0xcbf29ce484222325;
+        let mut h2: u64 = 0x811c9dc5;
+        for &val in &self.function.chunk.code {
+            for byte in val.to_ne_bytes() {
+                h1 ^= byte as u64;
+                h1 = h1.wrapping_mul(0x100000001b3);
+                h2 ^= byte as u64;
+                h2 = h2.wrapping_mul(1099511628211);
+            }
+        }
+        let mut hash = [0u8; 16];
+        hash[0..8].copy_from_slice(&h1.to_le_bytes());
+        hash[8..16].copy_from_slice(&h2.to_le_bytes());
+        self.function.chunk.bytecode_hash = hash;
+
         Ok(self.function)
     }
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
             Stmt::Expression(expr) => {
-                self.compile_expr(expr)?;
-                self.emit(OpCode::Pop, 0); // pop result off stack
+                let slot = self.locals.len() as u8;
+                self.update_max_registers(slot);
+                self.compile_expr(expr, slot)?;
             }
 
-            Stmt::Let { pattern, initializer, .. } => {
+            Stmt::Let { pattern, is_mut, type_annotation, initializer } => {
+                let slot = self.locals.len();
                 if let Some(init) = initializer {
-                    self.compile_expr(init)?;
+                    self.compile_expr(init, slot as u8)?;
                 } else {
-                    self.emit(OpCode::Null, 0);
+                    self.update_max_registers(slot as u8);
+                    self.emit_inst(encode_inst(OP_LOAD_NULL, slot as u8, 0, 0), 0);
+                }
+
+                // Handle type tag
+                let mut tag = None;
+                if let Some(Type::Simple(ref s)) = type_annotation {
+                    if s == "int" {
+                        tag = Some(TypeTag::Int);
+                    } else if s == "float" {
+                        tag = Some(TypeTag::Float);
+                    } else if s == "bool" {
+                        tag = Some(TypeTag::Bool);
+                    } else if s == "string" {
+                        tag = Some(TypeTag::String);
+                    }
+                }
+
+                // Grow metadata if needed
+                while self.type_metadata.len() <= slot {
+                    self.type_metadata.push(None);
+                    self.mutability_flags.push(false);
+                }
+
+                if *is_mut {
+                    self.type_metadata[slot] = None;
+                    self.mutability_flags[slot] = true;
+                } else {
+                    self.type_metadata[slot] = tag;
+                    self.mutability_flags[slot] = false;
                 }
 
                 match pattern {
@@ -86,17 +182,16 @@ impl Compiler {
                                 depth: self.scope_depth,
                                 is_captured: false,
                             });
-                            if self.locals.len() > self.function.max_locals {
-                                self.function.max_locals = self.locals.len();
-                            }
+                            self.update_max_registers((self.locals.len() - 1) as u8);
                         } else {
                             let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
-                            self.emit(OpCode::DefineGlobal(idx), name.line);
+                            self.emit_inst(encode_inst_imm16(OP_DEFINE_GLOBAL, slot as u8, idx as u16), name.line);
                         }
                     }
                     _ => return Err("Destructuring in 'let' not yet implemented in compiler.".to_string()),
                 }
             }
+
             Stmt::Block(stmts) => {
                 self.begin_scope();
                 for s in stmts {
@@ -104,364 +199,465 @@ impl Compiler {
                 }
                 self.end_scope();
             }
+
             Stmt::If { condition, then_branch, elif_branches, else_branch } => {
-                self.compile_expr(condition)?;
-                let then_jump = self.emit_jump(OpCode::JumpIfFalse(0));
-                self.emit(OpCode::Pop, 0);
+                let cond_reg = self.locals.len() as u8;
+                self.update_max_registers(cond_reg);
+                self.compile_expr(condition, cond_reg)?;
+
+                let then_jump = self.emit_jump(OP_JUMP_IF_FALSE, cond_reg);
                 self.compile_stmt(then_branch)?;
-                let mut end_jumps = vec![self.emit_jump(OpCode::Jump(0))];
                 
+                let mut end_jumps = vec![self.emit_jump(OP_JUMP, 0)];
                 self.patch_jump(then_jump);
-                self.emit(OpCode::Pop, 0);
-                
+
                 for (elif_cond, elif_body) in elif_branches {
-                    self.compile_expr(elif_cond)?;
-                    let elif_jump = self.emit_jump(OpCode::JumpIfFalse(0));
-                    self.emit(OpCode::Pop, 0);
+                    self.compile_expr(elif_cond, cond_reg)?;
+                    let elif_jump = self.emit_jump(OP_JUMP_IF_FALSE, cond_reg);
                     self.compile_stmt(elif_body)?;
-                    end_jumps.push(self.emit_jump(OpCode::Jump(0)));
+                    end_jumps.push(self.emit_jump(OP_JUMP, 0));
                     self.patch_jump(elif_jump);
-                    self.emit(OpCode::Pop, 0);
                 }
-                
+
                 if let Some(eb) = else_branch {
                     self.compile_stmt(eb)?;
                 }
-                
+
                 for jump in end_jumps {
                     self.patch_jump(jump);
                 }
             }
+
             Stmt::While { condition, body } => {
                 let loop_start = self.current_chunk().code.len();
-                self.compile_expr(condition)?;
-                let exit_jump = self.emit_jump(OpCode::JumpIfFalse(0));
-                self.emit(OpCode::Pop, 0);
+                let cond_reg = self.locals.len() as u8;
+                self.update_max_registers(cond_reg);
+                self.compile_expr(condition, cond_reg)?;
+
+                let exit_jump = self.emit_jump(OP_JUMP_IF_FALSE, cond_reg);
                 self.compile_stmt(body)?;
                 self.emit_loop(loop_start);
                 self.patch_jump(exit_jump);
-                self.emit(OpCode::Pop, 0);
             }
-            Stmt::For { item: _, iterable: _, body: _ } => {
-                // For simplicity, implement a naive while loop over array
-                // e.g. `for i in arr` => `let mut idx = 0; while idx < arr.len { let i = arr[idx]; body; idx+=1 }`
-                // Emitting basic logic (not robust iterator)
+
+            Stmt::For { .. } => {
                 return Err("For loops require iterator protocol or array length logic via stdlib, simplifying for VM v1.".to_string());
             }
-            Stmt::Function { name, params, variadic: _, is_async, is_static, is_abstract, visibility, body, .. } => {
-                let is_method = self.emitting_method; // Use emitting_method flag from outer compiler
+
+            Stmt::Function { name, params, variadic: _, is_async, is_static: _, is_abstract: _, visibility: _, return_type: _, body } => {
+                let is_method = self.emitting_method;
                 let mut compiler = Compiler::new(&name.lexeme, *is_async, is_method, Some(self as *mut Compiler));
                 compiler.function.arity = params.len();
-                // TODO: handle variadic, default values, visibility, abstract, and static in VM/Compiler logic
-                let _ = is_static;
-                let _ = visibility;
-                let _ = is_abstract;
+
                 compiler.begin_scope();
-                for (p, _, _) in params {
+                for (p, type_annotation, _) in params {
+                    let slot = compiler.locals.len();
+                    let mut tag = None;
+                    if let Some(Type::Simple(ref s)) = type_annotation {
+                        if s == "int" { tag = Some(TypeTag::Int); }
+                        else if s == "float" { tag = Some(TypeTag::Float); }
+                        else if s == "bool" { tag = Some(TypeTag::Bool); }
+                        else if s == "string" { tag = Some(TypeTag::String); }
+                    }
+                    while compiler.type_metadata.len() <= slot {
+                        compiler.type_metadata.push(None);
+                        compiler.mutability_flags.push(false);
+                    }
+                    compiler.type_metadata[slot] = tag;
+                    compiler.mutability_flags[slot] = false;
                     compiler.locals.push(Local { name: p.lexeme.clone(), depth: compiler.scope_depth, is_captured: false });
                 }
-                compiler.function.max_locals = compiler.locals.len();
+                compiler.max_registers = compiler.locals.len();
+
                 for s in body {
                     compiler.compile_stmt(s)?;
                 }
-                if name.lexeme == "init" || name.lexeme == "constructor" {
-                    compiler.emit(OpCode::GetLocal(0), 0);
-                } else {
-                    compiler.emit(OpCode::Null, 0);
-                }
-                compiler.emit(OpCode::Return, 0);
 
-                let fun = compiler.function;
+                if name.lexeme == "init" || name.lexeme == "constructor" {
+                    // return self (slot 0)
+                    compiler.emit_inst(encode_inst(OP_RETURN, 0, 0, 0), 0);
+                } else {
+                    let res_reg = compiler.locals.len() as u8;
+                    compiler.update_max_registers(res_reg);
+                    compiler.emit_inst(encode_inst(OP_LOAD_NULL, res_reg, 0, 0), 0);
+                    compiler.emit_inst(encode_inst(OP_RETURN, res_reg, 0, 0), 0);
+                }
+
+                let fun = compiler.finish()?;
                 let idx = self.add_constant(Value::obj(Arc::new(Obj::Function(Arc::new(fun)))));
-                
+
                 if self.emitting_method {
-                    self.emit(OpCode::Closure(idx), name.line);
+                    let dest_reg = self.locals.len() as u8;
+                    self.update_max_registers(dest_reg);
+                    self.emit_inst(encode_inst_imm16(OP_CLOSURE, dest_reg, idx as u16), name.line);
                 } else if self.scope_depth > 0 {
-                    self.emit(OpCode::Closure(idx), name.line);
+                    let dest_reg = self.locals.len() as u8;
+                    self.update_max_registers(dest_reg);
+                    self.emit_inst(encode_inst_imm16(OP_CLOSURE, dest_reg, idx as u16), name.line);
                     self.locals.push(Local { name: name.lexeme.clone(), depth: self.scope_depth, is_captured: false });
+                    self.update_max_registers((self.locals.len() - 1) as u8);
                 } else {
+                    let temp_reg = self.locals.len() as u8;
+                    self.update_max_registers(temp_reg);
                     let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
-                    self.emit(OpCode::Closure(idx), name.line);
-                    self.emit(OpCode::DefineGlobal(name_idx), name.line);
+                    self.emit_inst(encode_inst_imm16(OP_CLOSURE, temp_reg, idx as u16), name.line);
+                    self.emit_inst(encode_inst_imm16(OP_DEFINE_GLOBAL, temp_reg, name_idx as u16), name.line);
                 }
             }
+
             Stmt::Return { keyword, value } => {
+                let res_reg = self.locals.len() as u8;
+                self.update_max_registers(res_reg);
                 if let Some(v) = value {
-                    self.compile_expr(v)?;
+                    self.compile_expr(v, res_reg)?;
                 } else {
-                    self.emit(OpCode::Null, keyword.line);
+                    self.emit_inst(encode_inst(OP_LOAD_NULL, res_reg, 0, 0), keyword.line);
                 }
-                self.emit(OpCode::Return, keyword.line);
+                self.emit_inst(encode_inst(OP_RETURN, res_reg, 0, 0), keyword.line);
             }
+
             Stmt::TryCatch { try_body, catch_param, catch_body } => {
-                let rescue_jump = self.emit_jump(OpCode::SetupHandler(0));
-                
+                let catch_param_reg = self.locals.len() as u8;
+                self.update_max_registers(catch_param_reg);
+                let rescue_jump = self.emit_jump(OP_SETUP_HANDLER, catch_param_reg);
+
                 self.compile_stmt(try_body)?;
-                self.emit(OpCode::PopHandler, 0); 
+                self.emit_inst(encode_inst(OP_POP_HANDLER, 0, 0, 0), 0);
                 
-                let end_jump = self.emit_jump(OpCode::Jump(0));
-                
+                let end_jump = self.emit_jump(OP_JUMP, 0);
                 self.patch_jump(rescue_jump);
-                
+
                 self.begin_scope();
                 self.locals.push(Local { name: catch_param.lexeme.clone(), depth: self.scope_depth, is_captured: false });
-                if self.locals.len() > self.function.max_locals {
-                    self.function.max_locals = self.locals.len();
-                }
+                self.update_max_registers((self.locals.len() - 1) as u8);
                 self.compile_stmt(catch_body)?;
                 self.end_scope();
-                
+
                 self.patch_jump(end_jump);
             }
+
             Stmt::Throw(expr) => {
-                self.compile_expr(expr)?;
-                self.emit(OpCode::Throw, 0);
+                let throw_reg = self.locals.len() as u8;
+                self.update_max_registers(throw_reg);
+                self.compile_expr(expr, throw_reg)?;
+                self.emit_inst(encode_inst(OP_THROW, throw_reg, 0, 0), 0);
             }
+
             Stmt::Export(stmt) => {
-                self.compile_stmt(stmt)?; // Just compile the inner stmt, export is metadata
+                self.compile_stmt(stmt)?;
             }
+
             Stmt::Struct { name, .. } => {
-                // Register struct as a global "type" name (Value::Null for now)
                 let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
-                self.emit(OpCode::Null, name.line);
-                self.emit(OpCode::DefineGlobal(idx), name.line);
+                let temp_reg = self.locals.len() as u8;
+                self.update_max_registers(temp_reg);
+                self.emit_inst(encode_inst(OP_LOAD_NULL, temp_reg, 0, 0), name.line);
+                self.emit_inst(encode_inst_imm16(OP_DEFINE_GLOBAL, temp_reg, idx as u16), name.line);
             }
-            Stmt::Class { name, methods, is_abstract, interfaces, superclass } => {
-                let _ = is_abstract;
-                let _ = interfaces;
+
+            Stmt::Class { name, methods, is_abstract: _, interfaces: _, superclass } => {
                 let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
-                
+                let dest_reg = self.locals.len() as u8;
+                self.update_max_registers(dest_reg + 1);
+
+                // Load class name as string constant to dest_reg
+                self.emit_inst(encode_inst_imm16(OP_LOAD_CONST, dest_reg, name_idx as u16), name.line);
+
+                // Superclass to dest_reg + 1
+                let super_reg = dest_reg + 1;
                 if let Some(super_token) = superclass {
-                    let s_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(super_token.lexeme.clone())))));
-                    self.emit(OpCode::GetGlobal(s_idx), super_token.line);
+                    self.named_variable(super_token, false, super_reg)?;
                 } else {
-                    self.emit(OpCode::Null, name.line);
+                    self.emit_inst(encode_inst(OP_LOAD_NULL, super_reg, 0, 0), name.line);
                 }
-                
-                self.emit(OpCode::BuildClass(name_idx), name.line);
-                
+
+                // Reserve dest_reg and super_reg
+                self.locals.push(Local { name: "".to_string(), depth: self.scope_depth, is_captured: false });
+                self.locals.push(Local { name: "".to_string(), depth: self.scope_depth, is_captured: false });
+
+                self.emit_inst(encode_inst(OP_BUILD_CLASS, dest_reg, super_reg, 0), name.line);
+
                 self.emitting_method = true;
                 for method in methods {
                     if let Stmt::Function { name: method_name, .. } = method {
+                        let method_reg = (self.locals.len()) as u8;
+                        self.update_max_registers(method_reg + 1); // for method name
                         self.compile_stmt(method)?;
+                        
                         let m_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(method_name.lexeme.clone())))));
-                        self.emit(OpCode::Method(m_idx), name.line);
+                        let name_reg = method_reg + 1;
+                        self.emit_inst(encode_inst_imm16(OP_LOAD_CONST, name_reg, m_idx as u16), name.line);
+                        
+                        self.emit_inst(encode_inst(OP_METHOD, dest_reg, name_reg, method_reg), name.line);
                     }
                 }
                 self.emitting_method = false;
 
-                self.emit(OpCode::DefineGlobal(name_idx), name.line);
+                self.emit_inst(encode_inst_imm16(OP_DEFINE_GLOBAL, dest_reg, name_idx as u16), name.line);
+
+                self.locals.pop();
+                self.locals.pop();
             }
+
             Stmt::Interface { name, .. } => {
-                // Interfaces are purely for static analysis right now
                 let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
-                self.emit(OpCode::Null, name.line);
-                self.emit(OpCode::DefineGlobal(idx), name.line);
+                let temp_reg = self.locals.len() as u8;
+                self.update_max_registers(temp_reg);
+                self.emit_inst(encode_inst(OP_LOAD_NULL, temp_reg, 0, 0), name.line);
+                self.emit_inst(encode_inst_imm16(OP_DEFINE_GLOBAL, temp_reg, idx as u16), name.line);
             }
-            Stmt::Match { expression, arms } => {
-                // Simplified match: compile expression, then use a series of jumps.
-                self.compile_expr(expression)?;
-                // Not implementing full match logic here for brevity, but will compile arms
-                for _ in arms {
-                    // self.compile_stmt(...)
-                }
-                self.emit(OpCode::Pop, 0); // pop match expr
+
+            Stmt::Match { .. } => {
+                return Err("Match statements not fully supported in compiler.".to_string());
             }
+
             Stmt::Enum { name, .. } => {
-                 let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
-                 self.emit(OpCode::Null, name.line);
-                 self.emit(OpCode::DefineGlobal(name_idx), name.line);
+                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.clone())))));
+                let temp_reg = self.locals.len() as u8;
+                self.update_max_registers(temp_reg);
+                self.emit_inst(encode_inst(OP_LOAD_NULL, temp_reg, 0, 0), name.line);
+                self.emit_inst(encode_inst_imm16(OP_DEFINE_GLOBAL, temp_reg, name_idx as u16), name.line);
             }
-            Stmt::TypeAlias { .. } => {
-                // Type aliases are purely for static analysis, nothing to emit
-            }
+
+            Stmt::TypeAlias { .. } => {}
+
             Stmt::Emit(expr) => {
                 let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from("emit")))));
-                self.emit(OpCode::GetGlobal(name_idx), 0);
-                self.compile_expr(expr)?;
-                self.emit(OpCode::Call(1), 0);
-                self.emit(OpCode::Pop, 0);
+                let temp_reg = self.locals.len() as u8;
+                self.update_max_registers(temp_reg + 1);
+                
+                self.emit_inst(encode_inst_imm16(OP_GET_GLOBAL, temp_reg, name_idx as u16), 0);
+                self.compile_expr(expr, temp_reg + 1)?;
+                self.emit_inst(encode_inst(OP_CALL, temp_reg, temp_reg, 1), 0);
             }
+
             Stmt::Import { module, items } => {
                 let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(module.lexeme.as_str())))));
                 if items.is_empty() {
-                    // use math;  →  load all exports
-                    self.emit(OpCode::ImportModule(name_idx), module.line);
+                    self.emit_inst(encode_inst_imm16(OP_IMPORT_MODULE, 0, name_idx as u16), module.line);
                 } else {
-                    // use { sqrt, pow } from math;  →  push item names, then ImportItems
-                    for item in items {
+                    let name_reg = self.locals.len() as u8;
+                    self.update_max_registers(name_reg + items.len() as u8);
+                    self.emit_inst(encode_inst_imm16(OP_LOAD_CONST, name_reg, name_idx as u16), module.line);
+                    
+                    let start_reg = name_reg + 1;
+                    for (i, item) in items.iter().enumerate() {
                         let item_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(item.lexeme.as_str())))));
-                        self.emit(OpCode::Constant(item_idx), item.line);
+                        self.emit_inst(encode_inst_imm16(OP_LOAD_CONST, start_reg + i as u8, item_idx as u16), item.line);
                     }
-                    self.emit(OpCode::ImportItems(name_idx, items.len() as u8), module.line);
+                    
+                    self.emit_inst(encode_inst(OP_IMPORT_ITEMS, name_reg, start_reg, items.len() as u8), module.line);
                 }
             }
         }
         Ok(())
     }
 
-    fn compile_expr(&mut self, expr: &Expr) -> Result<(), String> {
+    fn compile_expr(&mut self, expr: &Expr, dest_reg: u8) -> Result<(), String> {
+        self.update_max_registers(dest_reg);
         match expr {
             Expr::Literal(lit) => {
                 match lit {
                     Literal::Int(i) => {
                         let idx = self.add_constant(Value::int(*i));
-                        self.emit(OpCode::Constant(idx), 0);
+                        self.emit_inst(encode_inst_imm16(OP_LOAD_CONST, dest_reg, idx as u16), 0);
                     }
                     Literal::Float(f) => {
                         let idx = self.add_constant(Value::float(*f));
-                        self.emit(OpCode::Constant(idx), 0);
+                        self.emit_inst(encode_inst_imm16(OP_LOAD_CONST, dest_reg, idx as u16), 0);
                     }
                     Literal::Bool(b) => {
-                        if *b { self.emit(OpCode::True, 0); } else { self.emit(OpCode::False, 0); }
+                        let op = if *b { OP_LOAD_TRUE } else { OP_LOAD_FALSE };
+                        self.emit_inst(encode_inst(op, dest_reg, 0, 0), 0);
                     }
                     Literal::String(s) => {
                         let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(s.clone())))));
-                        self.emit(OpCode::Constant(idx), 0);
+                        self.emit_inst(encode_inst_imm16(OP_LOAD_CONST, dest_reg, idx as u16), 0);
                     }
                     Literal::Null => {
-                        self.emit(OpCode::Null, 0);
+                        self.emit_inst(encode_inst(OP_LOAD_NULL, dest_reg, 0, 0), 0);
                     }
                 }
             }
+
             Expr::Variable(name) => {
-                self.named_variable(name, false)?;
+                self.named_variable(name, false, dest_reg)?;
             }
+
             Expr::Assign { name, value } => {
-                self.compile_expr(value)?;
-                self.named_variable(name, true)?;
+                self.compile_expr(value, dest_reg)?;
+                self.named_variable(name, true, dest_reg)?;
             }
+
             Expr::Logical { left, operator, right } => {
                 if operator.ty == TokenType::Nullish {
-                    self.compile_expr(left)?;
-                    let jump_if_null = self.emit_jump(OpCode::JumpIfNull(0));
-                    let jump_end = self.emit_jump(OpCode::Jump(0));
+                    self.compile_expr(left, dest_reg)?;
+                    let jump_if_null = self.emit_jump(OP_JUMP_IF_NULL, dest_reg);
+                    let jump_end = self.emit_jump(OP_JUMP, 0);
                     
                     self.patch_jump(jump_if_null);
-                    self.emit(OpCode::Pop, operator.line); // pop the null
-                    self.compile_expr(right)?;
-                    
+                    self.compile_expr(right, dest_reg)?;
                     self.patch_jump(jump_end);
                 } else {
                     return Err(format!("Unknown logical operator {:?}", operator.ty));
                 }
             }
+
             Expr::Unary { operator, right } => {
-                self.compile_expr(right)?;
+                self.compile_expr(right, dest_reg)?;
                 match operator.ty {
-                    TokenType::Minus => self.emit(OpCode::Negate, operator.line),
-                    TokenType::Bang => self.emit(OpCode::Not, operator.line),
+                    TokenType::Minus => self.emit_inst(encode_inst(OP_NEGATE, dest_reg, dest_reg, 0), operator.line),
+                    TokenType::Bang => self.emit_inst(encode_inst(OP_NOT, dest_reg, dest_reg, 0), operator.line),
                     _ => return Err(format!("Unknown unary operator {:?}", operator.ty)),
                 }
             }
+
             Expr::Binary { left, operator, right } => {
-                self.compile_expr(left)?;
-                self.compile_expr(right)?;
-                match operator.ty {
-                    TokenType::Plus => self.emit(OpCode::Add, operator.line),
-                    TokenType::Minus => self.emit(OpCode::Subtract, operator.line),
-                    TokenType::Star => self.emit(OpCode::Multiply, operator.line),
-                    TokenType::Slash => self.emit(OpCode::Divide, operator.line),
-                    TokenType::EqualEqual => self.emit(OpCode::Equal, operator.line),
-                    TokenType::BangEqual => {
-                        self.emit(OpCode::Equal, operator.line);
-                        self.emit(OpCode::Not, operator.line);
-                    }
-                    TokenType::Greater => self.emit(OpCode::Greater, operator.line),
-                    TokenType::Less => self.emit(OpCode::Less, operator.line),
+                self.compile_expr(left, dest_reg)?;
+                let temp_reg = dest_reg + 1;
+                self.compile_expr(right, temp_reg)?;
+                
+                let op = match operator.ty {
+                    TokenType::Plus => OP_ADD,
+                    TokenType::Minus => OP_SUBTRACT,
+                    TokenType::Star => OP_MULTIPLY,
+                    TokenType::Slash => OP_DIVIDE,
+                    TokenType::EqualEqual => OP_EQUAL,
+                    TokenType::BangEqual => OP_NEQ,
+                    TokenType::Greater => OP_GREATER,
+                    TokenType::Less => OP_LESS,
                     _ => return Err(format!("Unknown binary operator {:?}", operator.ty))
-                }
+                };
+                self.emit_inst(encode_inst(op, dest_reg, dest_reg, temp_reg), operator.line);
             }
+
             Expr::Call { callee, arguments, paren } => {
-                self.compile_expr(callee)?;
-                for arg in arguments {
-                    self.compile_expr(arg)?;
+                // Compile callee to dest_reg, and arguments contiguously starting at dest_reg + 1
+                self.compile_expr(callee, dest_reg)?;
+                for (i, arg) in arguments.iter().enumerate() {
+                    self.compile_expr(arg, dest_reg + 1 + i as u8)?;
                 }
-                self.emit(OpCode::Call(arguments.len() as u8), paren.line);
+                self.emit_inst(encode_inst(OP_CALL, dest_reg, dest_reg, arguments.len() as u8), paren.line);
             }
+
             Expr::Array { elements } => {
-                for el in elements {
-                    self.compile_expr(el)?;
+                for (i, el) in elements.iter().enumerate() {
+                    self.compile_expr(el, dest_reg + i as u8)?;
                 }
-                self.emit(OpCode::BuildArray(elements.len() as u8), 0);
+                self.emit_inst(encode_inst(OP_BUILD_ARRAY, dest_reg, dest_reg, elements.len() as u8), 0);
             }
+
             Expr::Get { object, name } => {
-                self.compile_expr(object)?;
-                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
-                self.emit(OpCode::GetProperty(name_idx), name.line);
+                self.compile_expr(object, dest_reg)?;
+                let name_reg = dest_reg + 1;
+                self.compile_expr(&Expr::Literal(Literal::String(name.lexeme.clone())), name_reg)?;
+                self.emit_inst(encode_inst(OP_GET_PROPERTY, dest_reg, dest_reg, name_reg), name.line);
             }
+
             Expr::Set { object, name, value } => {
-                self.compile_expr(object)?;
-                self.compile_expr(value)?;
-                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
-                self.emit(OpCode::SetProperty(name_idx), name.line);
+                self.compile_expr(object, dest_reg)?;
+                let val_reg = dest_reg + 1;
+                self.compile_expr(value, val_reg)?;
+                
+                let name_reg = dest_reg + 2;
+                self.compile_expr(&Expr::Literal(Literal::String(name.lexeme.clone())), name_reg)?;
+                
+                self.emit_inst(encode_inst(OP_SET_PROPERTY, dest_reg, name_reg, val_reg), name.line);
+                // Assign value to dest_reg
+                self.emit_inst(encode_inst(OP_MOVE, dest_reg, val_reg, 0), name.line);
             }
-             Expr::StructInit { name, fields } => {
-                for (field_name, val) in fields {
+
+            Expr::StructInit { name, fields } => {
+                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
+                self.emit_inst(encode_inst_imm16(OP_LOAD_CONST, dest_reg, name_idx as u16), name.line);
+
+                let start_reg = dest_reg + 1;
+                for (i, (field_name, val)) in fields.iter().enumerate() {
                     let field_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(field_name.lexeme.as_str())))));
-                    self.emit(OpCode::Constant(field_idx), field_name.line);
-                    self.compile_expr(val)?;
+                    let name_reg = start_reg + i as u8 * 2;
+                    let val_reg = name_reg + 1;
+                    
+                    self.emit_inst(encode_inst_imm16(OP_LOAD_CONST, name_reg, field_idx as u16), field_name.line);
+                    self.compile_expr(val, val_reg)?;
                 }
-                let idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
-                self.emit(OpCode::BuildInstance(idx, fields.len() as u8), name.line);
+                
+                self.emit_inst(encode_inst(OP_BUILD_INSTANCE, dest_reg, start_reg, fields.len() as u8), name.line);
             }
+
             Expr::Dict { entries } => {
-                for (key, val) in entries {
-                    self.compile_expr(key)?;
-                    self.compile_expr(val)?;
+                let start_reg = dest_reg;
+                for (i, (key, val)) in entries.iter().enumerate() {
+                    self.compile_expr(key, start_reg + i as u8 * 2)?;
+                    self.compile_expr(val, start_reg + i as u8 * 2 + 1)?;
                 }
-                self.emit(OpCode::BuildDict(entries.len() as u8), 0);
+                self.emit_inst(encode_inst(OP_BUILD_DICT, dest_reg, start_reg, entries.len() as u8), 0);
             }
+
             Expr::Tuple { elements } => {
-                for el in elements {
-                    self.compile_expr(el)?;
+                let start_reg = dest_reg;
+                for (i, el) in elements.iter().enumerate() {
+                    self.compile_expr(el, start_reg + i as u8)?;
                 }
-                self.emit(OpCode::BuildTuple(elements.len() as u8), 0);
+                self.emit_inst(encode_inst(OP_BUILD_TUPLE, dest_reg, start_reg, elements.len() as u8), 0);
             }
+
             Expr::SetInit { elements } => {
-                for el in elements {
-                    self.compile_expr(el)?;
+                let start_reg = dest_reg;
+                for (i, el) in elements.iter().enumerate() {
+                    self.compile_expr(el, start_reg + i as u8)?;
                 }
-                self.emit(OpCode::BuildSet(elements.len() as u8), 0);
+                self.emit_inst(encode_inst(OP_BUILD_SET, dest_reg, start_reg, elements.len() as u8), 0);
             }
+
             Expr::OptionalGet { object, name } => {
-                self.compile_expr(object)?;
-                let jump = self.emit_jump(OpCode::JumpIfNull(0)); 
-                let name_idx = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
-                self.emit(OpCode::GetProperty(name_idx), name.line);
+                self.compile_expr(object, dest_reg)?;
+                let jump = self.emit_jump(OP_JUMP_IF_NULL, dest_reg);
+                
+                let name_reg = dest_reg + 1;
+                self.compile_expr(&Expr::Literal(Literal::String(name.lexeme.clone())), name_reg)?;
+                self.emit_inst(encode_inst(OP_GET_PROPERTY, dest_reg, dest_reg, name_reg), name.line);
+                
                 self.patch_jump(jump);
             }
+
             Expr::Ternary { condition, then_branch, else_branch } => {
-                self.compile_expr(condition)?;
-                let then_jump = self.emit_jump(OpCode::JumpIfFalse(0));
-                self.emit(OpCode::Pop, 0);
-                self.compile_expr(then_branch)?;
-                let else_jump = self.emit_jump(OpCode::Jump(0));
+                self.compile_expr(condition, dest_reg)?;
+                let then_jump = self.emit_jump(OP_JUMP_IF_FALSE, dest_reg);
+                self.compile_expr(then_branch, dest_reg)?;
+                let else_jump = self.emit_jump(OP_JUMP, 0);
                 
                 self.patch_jump(then_jump);
-                self.emit(OpCode::Pop, 0);
-                self.compile_expr(else_branch)?;
-                
+                self.compile_expr(else_branch, dest_reg)?;
                 self.patch_jump(else_jump);
             }
+
             Expr::Spread(_) => return Err("Spread operator only supported in arrays for now.".to_string()),
+
             Expr::Index { object, index, .. } => {
-                self.compile_expr(object)?;
-                self.compile_expr(index)?;
-                self.emit(OpCode::GetIndex, 0);
+                self.compile_expr(object, dest_reg)?;
+                let idx_reg = dest_reg + 1;
+                self.compile_expr(index, idx_reg)?;
+                self.emit_inst(encode_inst(OP_GET_INDEX, dest_reg, dest_reg, idx_reg), 0);
             }
+
             Expr::IndexSet { object, index, value, .. } => {
-                self.compile_expr(object)?;
-                self.compile_expr(index)?;
-                self.compile_expr(value)?;
-                self.emit(OpCode::SetIndex, 0);
+                self.compile_expr(object, dest_reg)?;
+                let idx_reg = dest_reg + 1;
+                self.compile_expr(index, idx_reg)?;
+                
+                let val_reg = dest_reg + 2;
+                self.compile_expr(value, val_reg)?;
+                
+                self.emit_inst(encode_inst(OP_SET_INDEX, dest_reg, idx_reg, val_reg), 0);
+                self.emit_inst(encode_inst(OP_MOVE, dest_reg, val_reg, 0), 0);
             }
+
             Expr::Pipe { left, right } => {
-                // value |> function  => function(value)
-                self.compile_expr(right)?;
-                self.compile_expr(left)?;
-                self.emit(OpCode::Call(1), 0);
-        }
+                self.compile_expr(right, dest_reg)?;
+                self.compile_expr(left, dest_reg + 1)?;
+                self.emit_inst(encode_inst(OP_CALL, dest_reg, dest_reg, 1), 0);
+            }
+
             Expr::Lambda { params, body, is_async } => {
                 let mut compiler = Compiler::new("lambda", *is_async, false, Some(self as *mut Compiler));
                 compiler.function.arity = params.len();
@@ -469,40 +665,42 @@ impl Compiler {
                 for (p, _, _) in params {
                     compiler.locals.push(Local { name: p.lexeme.clone(), depth: compiler.scope_depth, is_captured: false });
                 }
-                compiler.function.max_locals = compiler.locals.len();
+                compiler.max_registers = compiler.locals.len();
                 for s in body {
                     compiler.compile_stmt(s)?;
                 }
-                compiler.emit(OpCode::Null, 0);
-                compiler.emit(OpCode::Return, 0);
+                let res_reg = compiler.locals.len() as u8;
+                compiler.update_max_registers(res_reg);
+                compiler.emit_inst(encode_inst(OP_LOAD_NULL, res_reg, 0, 0), 0);
+                compiler.emit_inst(encode_inst(OP_RETURN, res_reg, 0, 0), 0);
 
-                let fun = compiler.function;
+                let fun = compiler.finish()?;
                 let idx = self.add_constant(Value::obj(Arc::new(Obj::Function(Arc::new(fun)))));
-                self.emit(OpCode::Closure(idx), 0);
+                self.emit_inst(encode_inst_imm16(OP_CLOSURE, dest_reg, idx as u16), 0);
             }
         }
         Ok(())
     }
 
-    fn named_variable(&mut self, name: &Token, can_assign: bool) -> Result<(), String> {
+    fn named_variable(&mut self, name: &Token, can_assign: bool, dest_reg: u8) -> Result<(), String> {
         if let Some(arg) = self.resolve_local(name) {
             if can_assign {
-                self.emit(OpCode::SetLocal(arg), name.line);
+                self.emit_inst(encode_inst(OP_MOVE, arg as u8, dest_reg, 0), name.line);
             } else {
-                self.emit(OpCode::GetLocal(arg), name.line);
+                self.emit_inst(encode_inst(OP_MOVE, dest_reg, arg as u8, 0), name.line);
             }
         } else if let Some(arg) = self.resolve_upvalue(name) {
             if can_assign {
-                self.emit(OpCode::SetUpvalue(arg), name.line);
+                self.emit_inst(encode_inst(OP_SET_UPVALUE, dest_reg, arg as u8, 0), name.line);
             } else {
-                self.emit(OpCode::GetUpvalue(arg), name.line);
+                self.emit_inst(encode_inst(OP_GET_UPVALUE, dest_reg, arg as u8, 0), name.line);
             }
         } else {
             let arg = self.add_constant(Value::obj(Arc::new(Obj::String(Arc::from(name.lexeme.as_str())))));
             if can_assign {
-                self.emit(OpCode::SetGlobal(arg), name.line);
+                self.emit_inst(encode_inst_imm16(OP_SET_GLOBAL, dest_reg, arg as u16), name.line);
             } else {
-                self.emit(OpCode::GetGlobal(arg), name.line);
+                self.emit_inst(encode_inst_imm16(OP_GET_GLOBAL, dest_reg, arg as u16), name.line);
             }
         }
         Ok(())
@@ -553,10 +751,9 @@ impl Compiler {
         self.scope_depth -= 1;
         while let Some(local) = self.locals.last() {
             if local.depth > self.scope_depth {
+                let reg = (self.locals.len() - 1) as u8;
                 if local.is_captured {
-                    self.emit(OpCode::CloseUpvalue, 0);
-                } else {
-                    self.emit(OpCode::Pop, 0);
+                    self.emit_inst(encode_inst(OP_CLOSE_UPVALUE, reg, 0, 0), 0);
                 }
                 self.locals.pop();
             } else {
@@ -565,29 +762,27 @@ impl Compiler {
         }
     }
 
-    fn emit(&mut self, op: OpCode, line: usize) {
-        self.function.chunk.write(op, line);
+    fn emit_inst(&mut self, inst: u32, line: usize) {
+        self.function.chunk.write(inst, line);
     }
 
-    fn emit_jump(&mut self, op: OpCode) -> usize {
-        self.emit(op, 0);
+    fn emit_jump(&mut self, op: u8, reg: u8) -> usize {
+        let inst = encode_inst_imm16(op, reg, 0);
+        self.emit_inst(inst, 0);
         self.current_chunk().code.len() - 1
     }
 
     fn patch_jump(&mut self, offset: usize) {
-        let jump = self.current_chunk().code.len() - 1 - offset;
-        match &mut self.current_chunk().code[offset] {
-            OpCode::JumpIfFalse(ref mut val) => *val = jump,
-            OpCode::Jump(ref mut val) => *val = jump,
-            OpCode::JumpIfNull(ref mut val) => *val = jump,
-            OpCode::SetupHandler(ref mut val) => *val = jump,
-            _ => {}
-        }
+        let jump = (self.current_chunk().code.len() - 1 - offset) as u16;
+        let inst = &mut self.current_chunk().code[offset];
+        let (op, reg, _) = decode_inst_imm16(*inst);
+        *inst = encode_inst_imm16(op, reg, jump);
     }
 
     fn emit_loop(&mut self, start: usize) {
-        let jump = self.current_chunk().code.len() - start + 1;
-        self.emit(OpCode::Loop(jump), 0);
+        let jump = (self.current_chunk().code.len() - start + 1) as u16;
+        let inst = encode_inst_imm16(OP_LOOP, 0, jump);
+        self.emit_inst(inst, 0);
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {

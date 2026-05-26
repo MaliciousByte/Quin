@@ -23,12 +23,15 @@ pub(crate) struct CallFrame {
     pub(crate) closure: Arc<Closure>,
     pub(crate) ip: usize,
     pub(crate) stack_offset: usize,
+    pub(crate) register_count: usize,
+    pub(crate) dst: Option<u8>,
 }
 
 pub(crate) struct ExceptionHandler {
     pub(crate) frame_idx: usize,
     pub(crate) stack_idx: usize,
     pub(crate) catch_ip: usize,
+    pub(crate) catch_reg: usize,
 }
 
 pub struct VM {
@@ -76,7 +79,7 @@ impl VM {
             upvalues: Vec::new(),
         });
         self.stack.push(Value::obj(Arc::new(Obj::Closure(closure.clone()))));
-        self.call_closure(closure, 0)?;
+        self.call_closure(closure, 0, 0, None)?;
 
         self.run()
     }
@@ -121,8 +124,9 @@ impl VM {
     pub fn run(&mut self) -> Result<(), String> {
         let starting_depth = self.frames.len();
         loop {
-            let op = self.read_instruction()?;
-            self.execute_op(op)?;
+            let inst = self.read_instruction_u32()?;
+            let (op_byte, _, _, _) = crate::frontend::chunk::decode_inst(inst);
+            exec::DISPATCH_TABLE[op_byte as usize](self, inst)?;
             if self.frames.len() < starting_depth {
                 return Ok(());
             }

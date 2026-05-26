@@ -61,14 +61,17 @@ impl VM {
                 upvalues: Vec::new(),
             });
             
+            let caller_offset = self.current_frame().map(|f| f.stack_offset).unwrap_or(0);
+            let callee_reg = (old_stack_len - caller_offset) as u8;
             // Push closure for the call
             self.stack.push(Value::obj(Arc::new(Obj::Closure(closure.clone()))));
-            self.call_closure(closure, 0)?;
+            self.call_closure(closure, 0, callee_reg, None)?;
             
             // Run the module script
             while self.frames.len() > old_frames_len {
-                let op = self.read_instruction()?;
-                self.execute_op(op)?;
+                let inst = self.read_instruction_u32()?;
+                let (op, _, _, _) = crate::frontend::chunk::decode_inst(inst);
+                super::exec::DISPATCH_TABLE[op as usize](self, inst)?;
             }
             
             // Clean up stack

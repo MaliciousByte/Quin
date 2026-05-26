@@ -99,10 +99,12 @@ pub extern "C" fn quin_call_native_1(vm_ptr: *mut crate::vm::VM, fn_bits: i64, a
             Obj::Closure(closure) => {
                 let vm = unsafe { &mut *vm_ptr };
                 let closure = closure.clone();
+                let caller_offset = if let Ok(f) = vm.current_frame() { f.stack_offset } else { 0 };
+                let callee_reg = (vm.stack.len() - caller_offset) as u8;
                 vm.push(fn_val.clone());
                 vm.push(arg_val.clone());
                 let starting_frames = vm.frames.len();
-                match vm.call_closure(closure, 1) {
+                match vm.call_closure(closure, 1, callee_reg, None) {
                     Ok(_) => {
                         if vm.frames.len() > starting_frames {
                             if let Err(_) = vm.run() {

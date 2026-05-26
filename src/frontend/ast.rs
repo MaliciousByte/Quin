@@ -50,7 +50,7 @@ pub enum Stmt {
     Emit(Expr),
     Let { 
         pattern: Pattern, 
-        is_const: bool, 
+        is_mut: bool, 
         type_annotation: Option<Type>, 
         initializer: Option<Expr> 
     },

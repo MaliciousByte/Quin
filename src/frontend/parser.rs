@@ -68,8 +68,9 @@ impl Parser {
     }
 
     fn let_declaration(&mut self) -> Result<Stmt, String> {
-        self.match_token(&[TokenType::Mut]); // optional mut keyword
+        let is_mut = self.match_token(&[TokenType::Mut]); // optional mut keyword
         let is_const = self.match_token(&[TokenType::Const]);
+        let _ = is_const;
         
         let pattern = if self.match_token(&[TokenType::LeftBrace]) {
             let mut names = Vec::new();
@@ -107,7 +108,7 @@ impl Parser {
         };
 
         self.consume(TokenType::Semicolon, "Expect ';' after variable declaration.")?;
-        Ok(Stmt::Let { pattern, is_const, type_annotation, initializer })
+        Ok(Stmt::Let { pattern, is_mut, type_annotation, initializer })
     }
 
     fn parse_params(&mut self) -> Result<Vec<(Token, Option<Type>, Option<Expr>)>, String> {

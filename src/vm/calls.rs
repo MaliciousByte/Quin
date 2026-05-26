@@ -5,8 +5,19 @@ use crate::vm::obj::Obj;
 use super::{VM, CallFrame};
 
 impl VM {
-    pub fn call_value(&mut self, arg_count: u8) -> Result<(), String> {
-        let callee = self.peek(arg_count as usize)?.clone();
+    pub fn call_value_native(&mut self, callee: Value, args: &[Value]) -> Result<(), String> {
+        let caller_offset = if let Ok(f) = self.current_frame() { f.stack_offset } else { 0 };
+        let callee_reg = (self.stack.len() - caller_offset) as u8;
+        self.push(callee);
+        for arg in args {
+            self.push(arg.clone());
+        }
+        self.call_value(callee_reg, args.len() as u8, None)
+    }
+
+    pub fn call_value(&mut self, callee_reg: u8, arg_count: u8, dst: Option<u8>) -> Result<(), String> {
+        let caller_offset = if let Ok(f) = self.current_frame() { f.stack_offset } else { 0 };
+        let callee = self.stack[caller_offset + callee_reg as usize].clone();
         if !callee.is_obj() {
             return Err(format!("Can only call functions, closures, and classes. Got: {}", callee));
         }
@@ -17,26 +28,33 @@ impl VM {
                     function: fun.clone(),
                     upvalues: Vec::new(),
                 });
-                self.call_closure(closure, arg_count)
+                self.call_closure(closure, arg_count, callee_reg, dst)
             }
             Obj::BoundMethod(bm) => {
-                let idx = self.stack.len() - arg_count as usize - 1;
-                self.stack[idx] = bm.receiver.clone();
+                let callee_stack_idx = caller_offset + callee_reg as usize;
+                self.stack[callee_stack_idx] = bm.receiver.clone();
                 let closure = Arc::new(Closure {
                     function: bm.method.clone(),
                     upvalues: Vec::new(),
                 });
-                self.call_closure(closure, arg_count)
+                self.call_closure(closure, arg_count, callee_reg, dst)
             }
-            Obj::Closure(closure) => self.call_closure(closure.clone(), arg_count),
+            Obj::Closure(closure) => self.call_closure(closure.clone(), arg_count, callee_reg, dst),
             Obj::Class(cls) => {
                 let inst = Arc::new(RefCell::new(InstanceValue {
                     class: cls.clone(),
                     shape: self.root_shape.clone(),
                     fields: RefCell::new(Vec::new()),
                 }));
-                let idx = self.stack.len() - arg_count as usize - 1;
-                self.stack[idx] = Value::obj(Arc::new(Obj::Object(inst.clone())));
+                let inst_val = Value::obj(Arc::new(Obj::Object(inst.clone())));
+                
+                let callee_stack_idx = caller_offset + callee_reg as usize;
+                
+                // Write self to the callee slot as receiver for constructor (or direct return)
+                if self.stack.len() <= callee_stack_idx {
+                    self.stack.resize(callee_stack_idx + 1, Value::null());
+                }
+                self.stack[callee_stack_idx] = inst_val.clone();
                 
                 let mut constructor_val = None;
                 let mut current_class = Some(cls.clone());
@@ -54,38 +72,51 @@ impl VM {
                         let constructor_obj = constructor_val.as_obj();
                         match &*constructor_obj {
                             Obj::Closure(c) => {
-                                let c = c.clone();
-                                return self.call_closure(c, arg_count);
+                                return self.call_closure(c.clone(), arg_count, callee_reg, dst);
                             }
                             Obj::Function(f) => {
                                 let closure = Arc::new(Closure {
                                     function: f.clone(),
                                     upvalues: Vec::new(),
                                 });
-                                return self.call_closure(closure, arg_count);
+                                return self.call_closure(closure, arg_count, callee_reg, dst);
                             }
                             _ => {}
                         }
                     }
                 }
+
+                // If no constructor, return instance value
+                if let Some(dst_reg) = dst {
+                    self.stack[caller_offset + dst_reg as usize] = inst_val;
+                } else {
+                    let callee_idx = caller_offset + callee_reg as usize;
+                    self.stack[callee_idx] = inst_val;
+                    self.stack.truncate(callee_idx + 1);
+                }
                 Ok(())
             }
             Obj::NativeFn(native) => {
+                let args_start = caller_offset + callee_reg as usize + 1;
                 let mut args = Vec::new();
-                for _ in 0..arg_count {
-                    args.push(self.pop()?);
+                for i in 0..arg_count {
+                    args.push(self.stack[args_start + i as usize].clone());
                 }
-                args.reverse();
                 let result = native(self, &args)?;
-                self.pop()?; // Pop the native fn
-                self.push(result);
+                if let Some(dst_reg) = dst {
+                    self.stack[caller_offset + dst_reg as usize] = result;
+                } else {
+                    let callee_idx = caller_offset + callee_reg as usize;
+                    self.stack[callee_idx] = result;
+                    self.stack.truncate(callee_idx + 1);
+                }
                 Ok(())
             }
             _ => Err(format!("Cannot call object instance directly.")),
         }
     }
 
-    pub(crate) fn call_closure(&mut self, closure: Arc<Closure>, arg_count: u8) -> Result<(), String> {
+    pub(crate) fn call_closure(&mut self, closure: Arc<Closure>, arg_count: u8, callee_reg: u8, dst: Option<u8>) -> Result<(), String> {
         if arg_count as usize != closure.function.arity {
             return Err(format!("Expected {} arguments but got {}.", closure.function.arity, arg_count));
         }
@@ -94,48 +125,33 @@ impl VM {
             return Err("Stack overflow.".to_string());
         }
 
-        if closure.function.increment_hotness() {
-            let native_ptr = self.jit_engine.compile(&closure.function);
-            closure.function.native_ptr.store(native_ptr as *mut u8, std::sync::atomic::Ordering::Relaxed);
+        // Increment profiling counter & update observed types for arguments
+        let counter = closure.function.chunk.profiling_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if counter >= 1000 && !closure.function.is_hot.load(std::sync::atomic::Ordering::Relaxed) {
+            closure.function.is_hot.store(true, std::sync::atomic::Ordering::Relaxed);
         }
 
-        let native_ptr = closure.function.native_ptr.load(std::sync::atomic::Ordering::Relaxed);
-        if !native_ptr.is_null() && self.jit_recursion_depth < 500 {
-             let native_fn: extern "C" fn(*mut VM, *const Value) -> Value = unsafe { std::mem::transmute(native_ptr) };
-             let stack_offset = self.stack.len() - arg_count as usize - 1;
-             
-             // Ensure stack has room for all locals before calling JIT
-             if self.stack.len() < stack_offset + closure.function.max_locals {
-                 self.stack.resize(stack_offset + closure.function.max_locals, Value::null());
-             }
-             
-             let args_ptr = unsafe { self.stack.as_ptr().add(stack_offset) };
-             self.jit_recursion_depth += 1;
-             let result = native_fn(self as *mut VM, args_ptr);
-             self.jit_recursion_depth -= 1;
-             
-             if result.is_deopt() {
-                 // Type guard failed — resume interpreter at deopt IP.
-                 let deopt_ip = result.as_deopt();
-                 let frame = CallFrame {
-                    closure,
-                    ip: deopt_ip,
-                    stack_offset,
-                 };
-                 self.frames.push(frame);
-                 return Ok(());
-             } else {
-                 // JIT returned successfully.
-                 self.stack.truncate(stack_offset);
-                 self.stack.push(result);
-                 return Ok(());
-             }
+        let caller_offset = if let Ok(f) = self.current_frame() { f.stack_offset } else { 0 };
+        let new_stack_offset = caller_offset + callee_reg as usize;
+
+        let needed = new_stack_offset + closure.function.chunk.register_count as usize;
+        if needed > super::STACK_MAX {
+            return Err("Stack overflow.".to_string());
+        }
+        if self.stack.len() < needed {
+            self.stack.resize(needed, Value::null());
+        }
+        let args_end = new_stack_offset + 1 + arg_count as usize;
+        for i in args_end..needed {
+            self.stack[i] = Value::null();
         }
 
         let frame = CallFrame {
             closure,
             ip: 0,
-            stack_offset: self.stack.len() - arg_count as usize - 1,
+            stack_offset: new_stack_offset,
+            register_count: needed - new_stack_offset,
+            dst,
         };
         self.frames.push(frame);
         Ok(())
