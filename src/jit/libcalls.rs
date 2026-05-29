@@ -168,3 +168,60 @@ pub extern "C" fn quin_get_global(vm_ptr: *mut crate::vm::VM, const_ptr: *const 
         Value::null().0 as i64
     }
 }
+
+/// Generic call: call any Quin value from JIT-compiled code.
+/// vm_ptr is *mut VM, callee_bits is NaN-boxed callee value,
+/// args_ptr points to an array of NaN-boxed arg values (as i64),
+/// arg_count is the number of arguments.
+/// Returns NaN-boxed result bits.
+#[no_mangle]
+pub extern "C" fn quin_call_generic(
+    vm_ptr: *mut crate::vm::VM,
+    callee_bits: i64,
+    args_ptr: *const i64,
+    arg_count: i64,
+) -> i64 {
+    let vm = unsafe { &mut *vm_ptr };
+    let callee = Value(callee_bits as u64);
+
+    // Build args Vec from the pointer
+    let mut args = Vec::with_capacity(arg_count as usize);
+    for i in 0..arg_count as usize {
+        let bits = unsafe { *args_ptr.add(i) };
+        let v = Value(bits as u64);
+        v.mark(); // increment refcount for the arg copy
+        args.push(v);
+    }
+
+    // Use call_value_native which handles all callee types
+    let caller_offset = if let Ok(f) = vm.current_frame() { f.stack_offset } else { 0 };
+    let callee_reg = (vm.stack.len() - caller_offset) as u8;
+    vm.push(callee.clone());
+    for arg in &args {
+        vm.push(arg.clone());
+    }
+
+    let starting_frames = vm.frames.len();
+    match vm.call_value(callee_reg, arg_count as u8, None) {
+        Ok(_) => {
+            if vm.frames.len() > starting_frames {
+                if let Err(_) = vm.run() {
+                    std::mem::forget(callee);
+                    for a in args { std::mem::forget(a); }
+                    return Value::null().0 as i64;
+                }
+            }
+            let v = vm.pop().unwrap_or(Value::null());
+            let bits = v.0 as i64;
+            std::mem::forget(v);
+            std::mem::forget(callee);
+            for a in args { std::mem::forget(a); }
+            bits
+        }
+        Err(_) => {
+            std::mem::forget(callee);
+            for a in args { std::mem::forget(a); }
+            Value::null().0 as i64
+        }
+    }
+}

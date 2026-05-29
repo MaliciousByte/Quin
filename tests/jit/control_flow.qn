@@ -2,7 +2,7 @@
 # This test forces functions through the JIT hot path (1000+ calls)
 # and verifies that control flow works correctly in native code.
 
-fn classify(n) {
+task classify(n) {
     if n > 0 { return 1; }
     else { return 0; }
 }
@@ -16,7 +16,7 @@ while i < 2000 {
 assert(sum == 1999, "JIT control flow: if/else failed");
 
 # Test nested comparisons in JIT
-fn abs_diff(a, b) {
+task abs_diff(a, b) {
     if a > b { return a - b; }
     return b - a;
 }

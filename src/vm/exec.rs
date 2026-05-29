@@ -645,7 +645,7 @@ fn handle_loop(vm: &mut VM, inst: u32) -> Result<(), String> {
         let closure = vm.current_frame()?.closure.clone();
         let native_ptr = vm.jit_engine.compile(&closure.function);
 
-        if !native_ptr.is_null() && vm.jit_recursion_depth < 500 {
+        if !native_ptr.is_null() && vm.jit_recursion_depth < 64 {
             closure.function.native_ptr.store(
                 native_ptr as *mut u8,
                 std::sync::atomic::Ordering::Relaxed,
@@ -667,7 +667,9 @@ fn handle_loop(vm: &mut VM, inst: u32) -> Result<(), String> {
                 unsafe { std::mem::transmute(native_ptr) };
             let args_ptr = unsafe { vm.stack.as_ptr().add(stack_offset) };
             vm.jit_recursion_depth += 1;
+            println!("[DEBUG] Entering JIT for {:?}, stack_offset = {}, stack len = {}", closure.function.name, stack_offset, vm.stack.len());
             let result = native_fn(vm as *mut VM, args_ptr);
+            println!("[DEBUG] Exited JIT for {:?} with result: {:?}", closure.function.name, result);
             vm.jit_recursion_depth -= 1;
 
             if result.is_deopt() {

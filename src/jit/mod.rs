@@ -32,6 +32,7 @@ impl JitEngine {
         jit_builder.symbol("quin_array_set", libcalls::quin_array_set as *const u8);
         jit_builder.symbol("quin_call_native_1", libcalls::quin_call_native_1 as *const u8);
         jit_builder.symbol("quin_get_global", libcalls::quin_get_global as *const u8);
+        jit_builder.symbol("quin_call_generic", libcalls::quin_call_generic as *const u8);
 
         let module = JITModule::new(jit_builder);
         Self { ctx: cranelift::codegen::Context::new(), module, fn_counter: 0 }
